@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { DecisionState } from "./decision-types.ts";
 
 /**
@@ -33,4 +34,65 @@ export function buildSemanticCompactionPreamble(state: DecisionState): string {
 	}
 
 	return sections.join("\n\n");
+}
+
+/**
+ * Scans historical messages for decisions, facts, and constraints to store into DecisionState
+ * before history is truncated or summarized.
+ */
+export function extractContextFromMessages(state: DecisionState, messages: AgentMessage[]): DecisionState {
+	const next = structuredClone(state);
+
+	for (const msg of messages) {
+		if (msg.role === "assistant" && Array.isArray(msg.content)) {
+			for (const block of msg.content) {
+				if (block.type === "text" && typeof block.text === "string") {
+					// Identify decision statements (e.g. "We will use...", "Decided to...", "Pattern chosen:")
+					const decisionMatch = block.text.match(
+						/(?:decided to|chosen pattern:|architectural decision:)\s*([^\n.]+)/i,
+					);
+					if (decisionMatch?.[1]) {
+						const d = decisionMatch[1].trim();
+						if (!next.context.decisions.includes(d)) {
+							next.context.decisions.push(d);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return next;
+}
+
+/**
+ * Selectively prunes bloated historical tool outputs (such as large directory listings or grep matches)
+ * when Jev compaction advisor indicates tool outputs are not critical context.
+ */
+export function pruneRedundantToolOutputsForCompaction(
+	messages: AgentMessage[],
+	advice: { retainToolOutputs?: boolean } = {},
+): AgentMessage[] {
+	if (advice.retainToolOutputs === true) {
+		return messages;
+	}
+
+	return messages.map((msg) => {
+		if (msg.role === "toolResult" && Array.isArray(msg.content)) {
+			const prunedContent = msg.content.map((c) => {
+				if (c.type === "text" && typeof c.text === "string" && c.text.length > 400) {
+					return {
+						type: "text" as const,
+						text: `${c.text.slice(0, 150)}\n... [Remaining ${c.text.length - 150} chars pruned by System-1 Semantic Compactor]`,
+					};
+				}
+				return c;
+			});
+			return {
+				...msg,
+				content: prunedContent,
+			};
+		}
+		return msg;
+	});
 }

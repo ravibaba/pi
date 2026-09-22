@@ -28,9 +28,16 @@ description: Guide and workflows for maintaining, calibrating, and optimizing Pi
 
 ### 1. Telemetry Harvesting
 Inspect closed-loop prediction outcomes recorded by `DecisionTelemetry`:
-- Accuracy of task tier predictions vs actual model escalations or user overrides.
-- Accuracy of tool risk assessments vs executed command outcomes.
-- Frequency of false-positive stall detections.
+- Run the telemetry analysis script:
+  ```bash
+  node scripts/jev-telemetry.ts
+  ```
+- Evaluates:
+  * Accuracy of task tier predictions vs actual model escalations.
+  * Precision of tool risk preflight vs prevented system failures.
+  * Recovery rate of stall and loop steering interventions.
+  * Accuracy of completion verification before turn settlement.
+  * Estimated token and cost savings vs System-2 prompt routers.
 
 ### 2. Question Prompt & Criteria Calibration
 Edit question bundles in [question-registry.ts](file:///Users/ravi/Desktop/PI-JEV/pi/packages/coding-agent/src/core/decision/question-registry.ts):
@@ -43,6 +50,7 @@ Adjust policy thresholds in [thresholds.ts](file:///Users/ravi/Desktop/PI-JEV/pi
 - `routingConfidence` (default: `0.85`): Raise to make tier switching more conservative.
 - `destructiveRisk` (default: `0.75`): Lower to require user confirmation on broader destructive candidates.
 - `stallProbability` (default: `0.75`): Lower if agent frequently loops without intervention; raise if premature interventions occur.
+- `completionConfidence` (default: `0.90`): Threshold required to authorize turn settlement when changes were made.
 
 ### 4. Regression & Benchmark Verification
 Before committing any question or threshold changes:

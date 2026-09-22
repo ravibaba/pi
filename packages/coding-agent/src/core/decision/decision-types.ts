@@ -6,7 +6,7 @@ export type DecisionMode = "off" | "shadow" | "advisory" | "enforced";
 
 export type ModelTier = "fast" | "standard" | "reasoning" | "deep";
 
-export type ExecutionPhase = "understand" | "explore" | "implement" | "test" | "debug" | "verify";
+export type ExecutionPhase = "understand" | "explore" | "implement" | "test" | "debug" | "verify" | "complete";
 
 export type StrategyAction = "continue" | "retry" | "change_strategy" | "escalate_model" | "stop_and_verify";
 

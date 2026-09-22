@@ -113,6 +113,27 @@ export function recordToolResultToState(
 		next.execution.phase = "implement";
 	}
 
+	// Automatic phase & verification detection from test/lint commands
+	if (params.toolName === "bash") {
+		const cmd = params.argsSummary.toLowerCase();
+		const isTestCommand = /vitest|jest|pytest|\btest\b|cargo\s+test|go\s+test|test\.sh/i.test(cmd);
+		const isLintCommand = /npm\s+run\s+check|biome|eslint|tsc|flake8|check/i.test(cmd);
+
+		if (isTestCommand) {
+			if (params.isError) {
+				next.verification.testStatus = "failing";
+				next.execution.phase = "debug";
+			} else {
+				next.verification.testStatus = "passing";
+				next.execution.phase = "verify";
+			}
+		}
+
+		if (isLintCommand) {
+			next.verification.lintsStatus = params.isError ? "errors" : "clean";
+		}
+	}
+
 	return next;
 }
 
@@ -138,6 +159,45 @@ export function recordVerificationToState(
 		next.execution.phase = "verify";
 	}
 
+	return next;
+}
+
+/**
+ * Appends a critical fact discovered during task execution into DecisionState.
+ */
+export function recordContextFact(state: DecisionState, fact: string): DecisionState {
+	const trimmed = fact.trim();
+	if (!trimmed || state.context.criticalFacts.includes(trimmed)) {
+		return state;
+	}
+	const next = structuredClone(state);
+	next.context.criticalFacts.push(trimmed);
+	return next;
+}
+
+/**
+ * Appends an architectural or code design decision into DecisionState.
+ */
+export function recordContextDecision(state: DecisionState, decision: string): DecisionState {
+	const trimmed = decision.trim();
+	if (!trimmed || state.context.decisions.includes(trimmed)) {
+		return state;
+	}
+	const next = structuredClone(state);
+	next.context.decisions.push(trimmed);
+	return next;
+}
+
+/**
+ * Appends an execution constraint into DecisionState.
+ */
+export function recordContextConstraint(state: DecisionState, constraint: string): DecisionState {
+	const trimmed = constraint.trim();
+	if (!trimmed || state.context.constraints.includes(trimmed)) {
+		return state;
+	}
+	const next = structuredClone(state);
+	next.context.constraints.push(trimmed);
 	return next;
 }
 

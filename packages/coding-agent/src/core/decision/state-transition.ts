@@ -45,16 +45,7 @@ export function assessStateTransition(
 		};
 	}
 
-	// 3. Execution phase change (e.g., understand -> implement or test -> debug)
-	if (current.execution.phase !== previous.execution.phase) {
-		return {
-			isMeaningful: true,
-			reason: "phase_change",
-			description: `Execution phase transitioned from ${previous.execution.phase} to ${current.execution.phase}`,
-		};
-	}
-
-	// 4. Consecutive failures incremented: failure classification and retry guidance needed
+	// 3. Consecutive failures incremented: failure classification and retry guidance needed
 	if (
 		current.execution.consecutiveFailures > previous.execution.consecutiveFailures &&
 		current.execution.consecutiveFailures >= 1
@@ -63,6 +54,15 @@ export function assessStateTransition(
 			isMeaningful: true,
 			reason: "tool_failure",
 			description: `Failure detected (consecutive: ${current.execution.consecutiveFailures}) with error signature`,
+		};
+	}
+
+	// 4. Execution phase change (e.g., understand -> implement or test -> debug)
+	if (current.execution.phase !== previous.execution.phase) {
+		return {
+			isMeaningful: true,
+			reason: "phase_change",
+			description: `Execution phase transitioned from ${previous.execution.phase} to ${current.execution.phase}`,
 		};
 	}
 

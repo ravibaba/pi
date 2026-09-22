@@ -309,4 +309,108 @@ describe("Session Integration with Jev Decision Subsystem", () => {
 		expect(harness.session.model?.id).toBe("faux-reasoning");
 		expect(harness.session.decisionState?.model.currentTier).toBe("reasoning");
 	});
+
+	it("dynamically escalates model to reasoning tier upon consecutive tool failures in enforced mode", async () => {
+		const reasoningModel: Model<any> = {
+			...fauxModel,
+			id: "faux-reasoning",
+			name: "Faux Reasoning Model",
+			reasoning: true,
+		};
+
+		const failingTool: AgentTool = {
+			name: "worker",
+			label: "Worker Tool",
+			description: "Always fails",
+			parameters: Type.Object({ cmd: Type.String() }),
+			execute: async () => {
+				throw new Error("Compilation failure: type mismatch");
+			},
+		};
+
+		const mockEngine = new MockDecisionEngine();
+		mockEngine.nextAnswers = {
+			strategyAction: {
+				type: "choice",
+				choice: "change_strategy",
+				confidence: 0.9,
+				probabilities: { continue: 0.05, retry: 0.05, change_strategy: 0.9, ask_user: 0.0 },
+			},
+		};
+
+		harness = await createHarness({
+			responses: [
+				{
+					text: "Attempt 1...",
+					toolCalls: [{ name: "worker", args: { cmd: "build" } }],
+				},
+				{
+					text: "Attempt 2...",
+					toolCalls: [{ name: "worker", args: { cmd: "build" } }],
+				},
+				"Escalated and resolved.",
+			],
+			baseToolsOverride: {
+				worker: failingTool,
+			},
+			scopedModels: [{ model: reasoningModel }],
+			settings: {
+				jev: {
+					enabled: true,
+					mode: "enforced",
+					modelTiers: {
+						reasoning: `${reasoningModel.provider}/${reasoningModel.id}`,
+					},
+				},
+			},
+			decisionEngine: mockEngine,
+		});
+
+		// Initially standard tier
+		expect(harness.session.model?.id).toBe(fauxModel.id);
+
+		await harness.session.prompt("Solve difficult type error");
+
+		// After consecutive failures, it should have escalated to the reasoning model
+		expect(harness.session.model?.id).toBe("faux-reasoning");
+		expect(harness.session.decisionState?.model.currentTier).toBe("reasoning");
+		expect(harness.session.decisionState?.execution.consecutiveFailures).toBeGreaterThanOrEqual(2);
+	});
+
+	it("automatically detects test command and transitions phase to verify", async () => {
+		const testBashTool: AgentTool = {
+			name: "bash",
+			label: "Bash",
+			description: "Bash execution",
+			parameters: Type.Object({ command: Type.String() }),
+			execute: async () => {
+				return { content: [{ type: "text", text: "✓ 12 tests passed" }], details: {} };
+			},
+		};
+
+		harness = await createHarness({
+			responses: [
+				{
+					text: "Running tests...",
+					toolCalls: [{ name: "bash", args: { command: "npm test" } }],
+				},
+				"All tests verified.",
+			],
+			baseToolsOverride: {
+				bash: testBashTool,
+			},
+			settings: {
+				jev: {
+					enabled: true,
+					mode: "shadow",
+				},
+			},
+		});
+
+		await harness.session.prompt("Verify the test suite");
+
+		const decisionState = harness.session.decisionState;
+		expect(decisionState?.verification.testStatus).toBe("passing");
+		expect(decisionState?.execution.phase).toBe("verify");
+	});
 });

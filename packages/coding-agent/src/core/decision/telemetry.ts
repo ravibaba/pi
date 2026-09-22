@@ -95,6 +95,10 @@ export class DecisionTelemetry {
 		return this._records.get(decisionId);
 	}
 
+	getRecords(): DecisionRecord[] {
+		return Array.from(this._records.values());
+	}
+
 	getMetrics(): DecisionTelemetryMetrics {
 		let totalLatency = 0;
 		let totalTokens = 0;

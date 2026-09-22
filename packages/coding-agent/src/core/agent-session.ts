@@ -73,10 +73,12 @@ import {
 } from "./compaction/index.ts";
 import {
 	buildSemanticCompactionPreamble,
+	COMPLETION_VERIFICATION_V1,
 	createInitialDecisionState,
 	type DecisionEngine,
 	DecisionPolicy,
 	type DecisionState,
+	extractContextFromMessages,
 	ModelRouter,
 	recordToolResultToState,
 	STRATEGY_SUPERVISOR_V1,
@@ -669,6 +671,26 @@ export class AgentSession {
 						if (directive.shouldInjectSteering && directive.steeringMessage) {
 							await this.steer(directive.steeringMessage);
 						}
+
+						// Adaptive mid-task reasoning & model tier escalation
+						if (
+							this._decisionState.execution.consecutiveFailures >= 2 ||
+							this._decisionState.execution.oscillationCount >= 3
+						) {
+							if (
+								this._decisionState.model.currentTier === "fast" ||
+								this._decisionState.model.currentTier === "standard"
+							) {
+								const targetModel = this._modelRouter.resolveModelForTier("reasoning");
+								if (targetModel && !modelsAreEqual(targetModel, this.agent.state.model)) {
+									await this.setModel(targetModel);
+									this._decisionState.model.currentTier = "reasoning";
+									this._decisionState.execution.strategyChanges++;
+								} else if (this.agent.state.model.reasoning) {
+									this.setThinkingLevel("high");
+								}
+							}
+						}
 					} catch {
 						// Graceful fallback
 					}
@@ -805,6 +827,43 @@ export class AgentSession {
 			const previousDecision = await previousFinishTurn?.(turn, signal);
 			if (previousDecision?.action === "end") return previousDecision;
 			if (extensionContinue || previousDecision?.action === "continue") return { action: "continue" };
+
+			// System-1 Completion Verification Gate
+			const jevSettings = this.settingsManager.getJevSettings();
+			if (
+				jevSettings.enabled &&
+				jevSettings.mode !== "off" &&
+				this._decisionState &&
+				turn.toolResults.length === 0 &&
+				turn.message.stopReason === "stop"
+			) {
+				const hasChanges = this._decisionState.execution.filesChanged.length > 0;
+				const isFailing = this._decisionState.verification.testStatus === "failing";
+
+				if (hasChanges || isFailing) {
+					try {
+						const decisionResult = await this._decisionEngine.decide(
+							this._decisionState,
+							COMPLETION_VERIFICATION_V1,
+						);
+						const completionEval = this._decisionPolicy.evaluateCompletion(decisionResult.answers);
+
+						if (completionEval.isComplete && !isFailing) {
+							this._decisionState.execution.phase = "complete";
+						} else if (jevSettings.mode === "enforced") {
+							// In enforced mode, reject premature turn completion when verification fails
+							const directive = isFailing
+								? "Verification failed: Tests are currently failing. Please investigate and fix test failures before finishing."
+								: `Verification incomplete: ${completionEval.reason}. Please run tests or verify the solution before completing.`;
+							await this.steer(directive);
+							return { action: "continue" };
+						}
+					} catch {
+						// Graceful fallback allows normal completion
+					}
+				}
+			}
+
 			return undefined;
 		};
 	}
@@ -2975,6 +3034,9 @@ export class AgentSession {
 				details = extensionCompaction.details;
 			} else {
 				// Shared default summary generator, also used by manual compaction.
+				if (this._decisionState) {
+					this._decisionState = extractContextFromMessages(this._decisionState, preparation.messagesToSummarize);
+				}
 				const semanticPreamble = this._decisionState
 					? buildSemanticCompactionPreamble(this._decisionState)
 					: undefined;
