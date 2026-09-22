@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { appendFileSync, existsSync } from "node:fs";
 import type { DecisionResult } from "./decision-types.ts";
 
 export interface DecisionOutcome {
@@ -78,6 +79,20 @@ export class DecisionTelemetry {
 		}
 
 		this._records.set(decisionId, record);
+
+		if (existsSync(".pi")) {
+			try {
+				appendFileSync(".pi/jev-telemetry.jsonl", `${JSON.stringify(record)}\n`, "utf-8");
+			} catch {
+				// Non-fatal if telemetry cannot be written
+			}
+		}
+
+		if (process.env.DEBUG?.includes("jev") || process.env.JEV_DEBUG) {
+			const info = `[Jev System-1] ${decisionType} (latency: ${result.latencyMs.toFixed(1)}ms, confidence: ${(result.confidence * 100).toFixed(0)}%)`;
+			console.error(info, JSON.stringify(simplifiedAnswers));
+		}
+
 		return decisionId;
 	}
 
@@ -89,6 +104,10 @@ export class DecisionTelemetry {
 				...outcome,
 			};
 		}
+	}
+
+	loadRecord(record: DecisionRecord): void {
+		this._records.set(record.decisionId, record);
 	}
 
 	getRecord(decisionId: string): DecisionRecord | undefined {

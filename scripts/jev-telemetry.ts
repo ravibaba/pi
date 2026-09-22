@@ -7,7 +7,7 @@
  * by correlating System-1 micro-model predictions with downstream task outcomes.
  */
 
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DecisionTelemetry } from "../packages/coding-agent/src/core/decision/telemetry.ts";
 import { DEFAULT_THRESHOLDS } from "../packages/coding-agent/src/core/decision/thresholds.ts";
@@ -125,8 +125,22 @@ export function printTelemetryReport(report: TelemetryReport): void {
 	console.log("\nTelemetry analysis complete.\n");
 }
 
-// Populate sample simulated telemetry if running standalone
 const telemetry = new DecisionTelemetry();
+const logPath = join(process.cwd(), ".pi/jev-telemetry.jsonl");
+if (existsSync(logPath)) {
+	try {
+		const lines = readFileSync(logPath, "utf-8").trim().split("\n");
+		for (const line of lines) {
+			if (!line.trim()) continue;
+			const r = JSON.parse(line);
+			telemetry.loadRecord(r);
+		}
+		console.log(`Loaded ${lines.length} recorded decisions from ${logPath}.\n`);
+	} catch {
+		// Use empty telemetry
+	}
+}
+
 const report = generateTelemetryAnalysis(telemetry);
 printTelemetryReport(report);
 
