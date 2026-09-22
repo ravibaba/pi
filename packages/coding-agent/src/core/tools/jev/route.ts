@@ -45,7 +45,7 @@ export function createJevRouteTool(
 				: createInitialDecisionState({ intent: targetIntent });
 
 			try {
-				const result = await engine.decide(evaluationState, TASK_ROUTING_V1);
+				const result = await engine.decide(evaluationState, TASK_ROUTING_V1, { decisionType: "task_routing" });
 				const answers = result.answers;
 
 				const tier = answers.modelTier?.choice ?? "standard";

@@ -45,6 +45,7 @@ describe("telemetry", () => {
 
 		const record1 = telemetry.getRecord(id1);
 		expect(record1?.decisionType).toBe("task_routing");
+		expect(record1?.model).toBe("jev-latest");
 		expect(record1?.prediction.modelTier).toBe("standard");
 
 		// Record downstream outcome

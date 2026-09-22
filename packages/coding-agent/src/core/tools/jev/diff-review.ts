@@ -79,7 +79,7 @@ export function createJevDiffReviewTool(
 					});
 
 			try {
-				const result = await engine.decide(reviewState, DIFF_REVIEW_V1);
+				const result = await engine.decide(reviewState, DIFF_REVIEW_V1, { decisionType: "diff_review" });
 				const answers = result.answers;
 
 				const scopeDrift = Number(answers.scopeDrift?.noul ?? 0);

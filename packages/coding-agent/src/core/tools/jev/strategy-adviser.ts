@@ -52,7 +52,7 @@ export function createJevStrategyTool(
 			}
 
 			try {
-				const result = await engine.decide(state, STRATEGY_SUPERVISOR_V1);
+				const result = await engine.decide(state, STRATEGY_SUPERVISOR_V1, { decisionType: "strategy_supervisor" });
 				const answers = result.answers;
 
 				const action = answers.strategyAction?.choice ?? "continue";

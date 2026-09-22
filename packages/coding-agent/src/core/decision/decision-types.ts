@@ -159,6 +159,7 @@ export interface DecisionOptions {
 	signal?: AbortSignal;
 	bypassCache?: boolean;
 	correlationId?: string;
+	decisionType?: string;
 }
 
 /** Core Decision Engine interface abstracting System-1 providers */

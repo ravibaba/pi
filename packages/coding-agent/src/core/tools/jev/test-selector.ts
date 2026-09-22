@@ -96,7 +96,7 @@ export function createJevTestSelectTool(
 
 			if (state) {
 				try {
-					const result = await engine.decide(state, TEST_SELECTION_V1);
+					const result = await engine.decide(state, TEST_SELECTION_V1, { decisionType: "test_selection" });
 					priority = result.answers.selectionPriority?.choice ?? "unit";
 					riskOfUnrun = Number(result.answers.riskOfUnrunFailures?.noul ?? 0.2);
 				} catch {

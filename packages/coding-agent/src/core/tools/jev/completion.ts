@@ -47,7 +47,9 @@ export function createJevCompletionTool(
 					});
 
 			try {
-				const result = await engine.decide(evalState, COMPLETION_VERIFICATION_V1);
+				const result = await engine.decide(evalState, COMPLETION_VERIFICATION_V1, {
+					decisionType: "completion_verification",
+				});
 				const answers = result.answers;
 
 				const goalSatisfied = Number(answers.goalSatisfied?.noul ?? 0.5);

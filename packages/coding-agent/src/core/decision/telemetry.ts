@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { getAgentDir } from "../../config.ts";
 import type { DecisionResult } from "./decision-types.ts";
 
 export interface DecisionOutcome {
@@ -20,6 +22,8 @@ export interface DecisionRecord {
 	readonly latencyMs: number;
 	readonly inputTokens: number;
 	readonly costUsd: number;
+	readonly model?: string;
+	readonly requestId?: string;
 	readonly fallback: boolean;
 	readonly fallbackReason?: string;
 	readonly prediction: Record<string, unknown>;
@@ -68,6 +72,8 @@ export class DecisionTelemetry {
 			latencyMs: result.latencyMs,
 			inputTokens: result.inputTokens,
 			costUsd: result.costUsd,
+			model: result.model,
+			requestId: result.requestId,
 			fallback: result.fallback,
 			fallbackReason: result.fallbackReason,
 			prediction: simplifiedAnswers,
@@ -80,12 +86,26 @@ export class DecisionTelemetry {
 
 		this._records.set(decisionId, record);
 
+		const line = `${JSON.stringify(record)}\n`;
+
+		// 1. Workspace-local telemetry log if .pi directory exists
 		if (existsSync(".pi")) {
 			try {
-				appendFileSync(".pi/jev-telemetry.jsonl", `${JSON.stringify(record)}\n`, "utf-8");
+				appendFileSync(".pi/jev-telemetry.jsonl", line, "utf-8");
 			} catch {
-				// Non-fatal if telemetry cannot be written
+				// Non-fatal if local telemetry cannot be written
 			}
+		}
+
+		// 2. Global agent telemetry log (~/.pi/agent/jev-telemetry.jsonl)
+		try {
+			const agentDir = getAgentDir();
+			if (!existsSync(agentDir)) {
+				mkdirSync(agentDir, { recursive: true });
+			}
+			appendFileSync(join(agentDir, "jev-telemetry.jsonl"), line, "utf-8");
+		} catch {
+			// Non-fatal if global telemetry cannot be written
 		}
 
 		if (process.env.DEBUG?.includes("jev") || process.env.JEV_DEBUG) {

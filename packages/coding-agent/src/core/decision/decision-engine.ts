@@ -86,6 +86,16 @@ export class CachedDecisionEngine implements DecisionEngine {
 	}
 }
 
+function inferDecisionType(questions: DecisionQuestionsMap): string {
+	if ("modelTier" in questions) return "task_routing";
+	if ("strategyAction" in questions) return "strategy_supervisor";
+	if ("goalSatisfied" in questions) return "completion_verification";
+	if ("codeQuality" in questions || "regressionRisk" in questions) return "diff_review";
+	if ("selectionPriority" in questions || "runAllTests" in questions) return "test_selection";
+	const keys = Object.keys(questions);
+	return keys.length === 1 ? keys[0]! : "multi_question";
+}
+
 /**
  * Standard Production Decision Engine orchestrating Jev, caching, telemetry, and fallback.
  */
@@ -122,7 +132,8 @@ export class StandardDecisionEngine implements DecisionEngine {
 		options?: DecisionOptions,
 	): Promise<DecisionResult<Q>> {
 		const result = await this._engine.decide(state, questions, options);
-		this._telemetry.record("multi_question", result);
+		const typeName = options?.decisionType || inferDecisionType(questions);
+		this._telemetry.record(typeName, result);
 		return result;
 	}
 }
