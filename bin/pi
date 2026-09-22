@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -e
+
+# Canonical script directory resolution (handling symlinks)
+TARGET="${BASH_SOURCE[0]}"
+while [ -L "$TARGET" ]; do
+  TARGET_DIR="$(cd -P "$(dirname "$TARGET")" >/dev/null 2>&1 && pwd)"
+  TARGET="$(readlink "$TARGET")"
+  [[ $TARGET != /* ]] && TARGET="$TARGET_DIR/$TARGET"
+done
+BIN_DIR="$(cd -P "$(dirname "$TARGET")" >/dev/null 2>&1 && pwd)"
+REPO_DIR="$(cd -P "$BIN_DIR/.." >/dev/null 2>&1 && pwd)"
+
+# Verify local dependencies exist
+if [ ! -f "$REPO_DIR/node_modules/.bin/tsx" ]; then
+  echo "Error: $REPO_DIR/node_modules/.bin/tsx not found. Run 'npm install --ignore-scripts' in $REPO_DIR first." >&2
+  exit 1
+fi
+
+exec "$REPO_DIR/node_modules/.bin/tsx" --tsconfig "$REPO_DIR/tsconfig.json" "$REPO_DIR/packages/coding-agent/src/cli.ts" "$@"
