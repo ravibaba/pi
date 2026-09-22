@@ -92,6 +92,9 @@ function renderDecisionLayer(jevMode?: string, selectedTools: string[] = []): st
 			"- jev_strategy: Consult when stuck, facing repeated test failures, or deciding whether to rethink approach.",
 			"- jev_test_select: Identify and prioritize the minimal test files affected by modified code.",
 			"- jev_status: Inspect living decision state, execution phase, churn, and telemetry.",
+			"- jev_route: Evaluate task complexity and recommended model tier.",
+			"- jev_risk_eval: Preflight high-impact commands or mutations for safety and blast radius.",
+			"- jev_completion: Independently verify if task requirements and acceptance criteria are satisfied.",
 		);
 	}
 

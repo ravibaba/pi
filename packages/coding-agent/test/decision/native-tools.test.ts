@@ -7,7 +7,10 @@ import type {
 	DecisionState,
 } from "../../src/core/decision/decision-types.ts";
 import {
+	createJevCompletionTool,
 	createJevDiffReviewTool,
+	createJevRiskEvalTool,
+	createJevRouteTool,
 	createJevStatusTool,
 	createJevStrategyTool,
 	createJevTestSelectTool,
@@ -32,7 +35,7 @@ class MockEngine implements DecisionEngine {
 }
 
 describe("native-jev-tools", () => {
-	it("createJevTools factory returns 4 native tools", () => {
+	it("createJevTools factory returns 7 native tools", () => {
 		const state = createInitialDecisionState({ intent: "Test task" });
 		const engine = new MockEngine();
 		const tools = createJevTools(
@@ -41,12 +44,15 @@ describe("native-jev-tools", () => {
 			() => engine,
 		);
 
-		expect(tools).toHaveLength(4);
+		expect(tools).toHaveLength(7);
 		const names = tools.map((t) => t.name);
 		expect(names).toContain("jev_diff_review");
 		expect(names).toContain("jev_strategy");
 		expect(names).toContain("jev_test_select");
 		expect(names).toContain("jev_status");
+		expect(names).toContain("jev_route");
+		expect(names).toContain("jev_risk_eval");
+		expect(names).toContain("jev_completion");
 	});
 
 	it("jev_diff_review evaluates git diff quality and returns actionable advice", async () => {
@@ -142,5 +148,72 @@ describe("native-jev-tools", () => {
 		expect(text).toContain("**Goal / Intent:** Refactor storage");
 		expect(text).toContain("**Execution Phase:** `implement`");
 		expect(text).toContain("PostgreSQL schema v2 is applied");
+	});
+
+	it("jev_route evaluates task complexity and recommends tier", async () => {
+		const state = createInitialDecisionState({ intent: "Refactor database pool" });
+		const engine = new MockEngine();
+		engine.nextAnswers = {
+			modelTier: { type: "choice", choice: "reasoning" },
+			complexity: { type: "score", score: 3 },
+			securitySensitive: { type: "noul", noul: 0.1 },
+			needsRepoSearch: { type: "noul", noul: 0.8 },
+			likelyLongHorizon: { type: "noul", noul: 0.7 },
+		};
+
+		const routeTool = createJevRouteTool(
+			() => state,
+			() => engine,
+		);
+		const result = await routeTool.execute("call-5", { task: "Refactor database pool" });
+		const text = (result.content[0] as { text: string }).text;
+		expect(text).toContain("**Recommended Model Tier:** `reasoning`");
+		expect(text).toContain("**Exploration Needed:** Yes");
+	});
+
+	it("jev_risk_eval evaluates destructive commands and outputs safety verdict", async () => {
+		const state = createInitialDecisionState({ intent: "Clean directory" });
+		const engine = new MockEngine();
+		engine.nextAnswers = {
+			destructive: { type: "noul", noul: 0.95 },
+			credentialAccess: { type: "noul", noul: 0.1 },
+			networkExfiltration: { type: "noul", noul: 0.05 },
+			productionImpact: { type: "noul", noul: 0.1 },
+			scopeViolation: { type: "score", score: 2 },
+		};
+
+		const riskTool = createJevRiskEvalTool(
+			() => state,
+			() => engine,
+		);
+		const result = await riskTool.execute("call-6", {
+			toolName: "bash",
+			commandOrArgs: "rm -rf /",
+		});
+		const text = (result.content[0] as { text: string }).text;
+		expect(text).toContain("**Policy Verdict:** `BLOCK`");
+		expect(text).toContain("Destructive Action Risk");
+	});
+
+	it("jev_completion assesses goal satisfaction and verification status", async () => {
+		const state = createInitialDecisionState({ intent: "Implement caching" });
+		state.verification.testStatus = "passing";
+		const engine = new MockEngine();
+		engine.nextAnswers = {
+			goalSatisfied: { type: "noul", noul: 0.9 },
+			verificationSufficient: { type: "noul", noul: 0.85 },
+			remainingBlockers: { type: "noul", noul: 0.05 },
+		};
+
+		const completionTool = createJevCompletionTool(
+			() => state,
+			() => engine,
+		);
+		const result = await completionTool.execute("call-7", {
+			notes: "Added Redis cache and all unit tests pass",
+		});
+		const text = (result.content[0] as { text: string }).text;
+		expect(text).toContain("**Overall Readiness:** `READY`");
+		expect(text).toContain("Ready to Settle");
 	});
 });

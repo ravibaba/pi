@@ -80,6 +80,7 @@ import {
 	type DecisionState,
 	extractContextFromMessages,
 	ModelRouter,
+	type ModelTier,
 	recordToolResultToState,
 	STRATEGY_SUPERVISOR_V1,
 	StandardDecisionEngine,
@@ -196,6 +197,13 @@ export type AgentSessionEvent =
 	| { type: "session_info_changed"; name: string | undefined }
 	| { type: "thinking_level_changed"; level: ThinkingLevel }
 	| {
+			type: "model_changed";
+			model: Model<any>;
+			previousModel: Model<any> | undefined;
+			tier?: ModelTier;
+			source?: "set" | "cycle" | "restore" | "jev_routing" | "jev_escalation";
+	  }
+	| {
 			type: "compaction_end";
 			reason: "manual" | "threshold" | "overflow";
 			result: CompactionResult | undefined;
@@ -297,6 +305,8 @@ export interface PromptOptions {
 export interface ModelMutationOptions {
 	/** Persist the new value to global defaults. Defaults to session-only. */
 	persist?: boolean;
+	/** Trigger source for telemetry and UI status */
+	source?: "set" | "cycle" | "restore" | "jev_routing" | "jev_escalation";
 }
 
 /** Result from cycleModel() */
@@ -703,9 +713,9 @@ export class AgentSession {
 							) {
 								const targetModel = this._modelRouter.resolveModelForTier("reasoning");
 								if (targetModel && !modelsAreEqual(targetModel, this.agent.state.model)) {
-									await this.setModel(targetModel);
 									this._decisionState.model.currentTier = "reasoning";
 									this._decisionState.execution.strategyChanges++;
+									await this.setModel(targetModel, { source: "jev_escalation" });
 								} else if (this.agent.state.model.reasoning) {
 									this.setThinkingLevel("high");
 								}
@@ -1907,7 +1917,7 @@ export class AgentSession {
 					if (jevSettings.mode === "enforced" && this.model) {
 						const targetModel = this._modelRouter.resolveModelForTier(policyRoute.tier);
 						if (targetModel && !modelsAreEqual(targetModel, this.model)) {
-							await this.setModel(targetModel);
+							await this.setModel(targetModel, { source: "jev_routing" });
 						}
 					}
 				} catch {
@@ -2379,6 +2389,14 @@ export class AgentSession {
 		// Model persistence does not implicitly rewrite the global thinking default.
 		this.setThinkingLevel(thinkingLevel);
 
+		this._emit({
+			type: "model_changed",
+			model,
+			previousModel,
+			tier: this._decisionState?.model?.currentTier,
+			source: options.source ?? "set",
+		});
+
 		await this._emitModelSelect(model, previousModel, "set");
 	}
 
@@ -2448,6 +2466,14 @@ export class AgentSession {
 		// Model persistence does not implicitly rewrite the global thinking default.
 		this.setThinkingLevel(thinkingLevel);
 
+		this._emit({
+			type: "model_changed",
+			model: next.model,
+			previousModel: currentModel,
+			tier: this._decisionState?.model?.currentTier,
+			source: options.source ?? "cycle",
+		});
+
 		await this._emitModelSelect(next.model, currentModel, "cycle");
 
 		return { model: next.model, thinkingLevel: this.thinkingLevel, isScoped: true };
@@ -2479,6 +2505,14 @@ export class AgentSession {
 		// Apply thinking level for the new model.
 		// Model persistence does not implicitly rewrite the global thinking default.
 		this.setThinkingLevel(thinkingLevel);
+
+		this._emit({
+			type: "model_changed",
+			model: nextModel,
+			previousModel: currentModel,
+			tier: this._decisionState?.model?.currentTier,
+			source: options.source ?? "cycle",
+		});
 
 		await this._emitModelSelect(nextModel, currentModel, "cycle");
 

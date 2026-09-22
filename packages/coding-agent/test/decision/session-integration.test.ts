@@ -488,6 +488,9 @@ describe("Session Integration with Jev Decision Subsystem", () => {
 		expect(activeTools).toContain("jev_strategy");
 		expect(activeTools).toContain("jev_test_select");
 		expect(activeTools).toContain("jev_status");
+		expect(activeTools).toContain("jev_route");
+		expect(activeTools).toContain("jev_risk_eval");
+		expect(activeTools).toContain("jev_completion");
 
 		const systemPrompt = harness.session.systemPrompt;
 		expect(systemPrompt).toContain("<decision_layer>");
@@ -514,8 +517,45 @@ describe("Session Integration with Jev Decision Subsystem", () => {
 		expect(activeTools).not.toContain("jev_strategy");
 		expect(activeTools).not.toContain("jev_test_select");
 		expect(activeTools).not.toContain("jev_status");
+		expect(activeTools).not.toContain("jev_route");
+		expect(activeTools).not.toContain("jev_risk_eval");
+		expect(activeTools).not.toContain("jev_completion");
 
 		const systemPrompt = harness.session.systemPrompt;
 		expect(systemPrompt).not.toContain("<decision_layer>");
+	});
+
+	it("emits model_changed event with tier and source in realtime when model changes", async () => {
+		const mockEngine = new MockDecisionEngine();
+		harness = await createHarness({
+			responses: ["Task completed"],
+			settings: {
+				jev: {
+					enabled: true,
+					mode: "enforced",
+				},
+			},
+			decisionEngine: mockEngine,
+		});
+
+		const events: any[] = [];
+		harness.session.subscribe((event) => {
+			if (event.type === "model_changed") {
+				events.push(event);
+			}
+		});
+
+		await harness.session.setModel(
+			{
+				...fauxModel,
+				id: "custom-faux-model",
+			},
+			{ source: "set" },
+		);
+
+		expect(events.length).toBe(1);
+		expect(events[0].type).toBe("model_changed");
+		expect(events[0].model.id).toBe("custom-faux-model");
+		expect(events[0].source).toBe("set");
 	});
 });

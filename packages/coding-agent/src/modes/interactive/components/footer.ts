@@ -168,7 +168,11 @@ export class FooterComponent implements Component {
 		let statsLeft = statsParts.join(" ");
 
 		// Add model name on the right side, plus thinking level if model supports it
-		const modelName = state.model?.id || "no-model";
+		const jevSettings = this.session.settingsManager.getJevSettings();
+		const jevTier =
+			jevSettings.enabled && jevSettings.mode !== "off" ? this.session.decisionState?.model?.currentTier : undefined;
+		const tierTag = jevTier ? ` [${jevTier}]` : "";
+		const modelName = `${state.model?.id || "no-model"}${tierTag}`;
 
 		let statsLeftWidth = visibleWidth(statsLeft);
 
