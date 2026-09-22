@@ -255,6 +255,13 @@ export function parseArgs(args: string[]): Args {
 		}
 	}
 
+	if (!result.model && process.env.PI_MODEL) {
+		result.model = process.env.PI_MODEL;
+	}
+	if (!result.provider && process.env.PI_PROVIDER) {
+		result.provider = process.env.PI_PROVIDER;
+	}
+
 	return result;
 }
 
