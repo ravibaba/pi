@@ -1,0 +1,26 @@
+[
+	{
+		"id": "comp-verified-1",
+		"testStatus": "passed",
+		"lintsStatus": "passed",
+		"diffMatch": 1.0,
+		"unresolvedQuestions": [],
+		"expectedComplete": true
+	},
+	{
+		"id": "comp-failing-tests-1",
+		"testStatus": "failed",
+		"lintsStatus": "passed",
+		"diffMatch": 0.9,
+		"unresolvedQuestions": [],
+		"expectedComplete": false
+	},
+	{
+		"id": "comp-untested-risky-1",
+		"testStatus": "untested",
+		"lintsStatus": "untested",
+		"diffMatch": 0.5,
+		"unresolvedQuestions": ["How should invalid tokens be handled?"],
+		"expectedComplete": false
+	}
+]

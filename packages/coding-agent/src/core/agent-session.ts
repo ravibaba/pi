@@ -71,6 +71,20 @@ import {
 	prepareCompaction,
 	shouldCompact,
 } from "./compaction/index.ts";
+import {
+	buildSemanticCompactionPreamble,
+	createInitialDecisionState,
+	type DecisionEngine,
+	DecisionPolicy,
+	type DecisionState,
+	ModelRouter,
+	recordToolResultToState,
+	STRATEGY_SUPERVISOR_V1,
+	StandardDecisionEngine,
+	StrategyController,
+	TASK_ROUTING_V1,
+	TOOL_RISK_V1,
+} from "./decision/index.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "./defaults.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
@@ -249,6 +263,8 @@ export interface AgentSessionConfig {
 	extensionRunnerRef?: { current?: ExtensionRunner };
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
+	/** Optional decision engine override (useful for testing or custom harnesses) */
+	decisionEngine?: DecisionEngine;
 }
 
 export interface ExtensionBindings {
@@ -409,6 +425,12 @@ export class AgentSession {
 	/** Prompt options after before_agent_start mutations for the active run. */
 	private _runSystemPromptOptions?: NormalizedBuildSystemPromptOptions;
 
+	private _decisionEngine!: DecisionEngine;
+	private _decisionPolicy!: DecisionPolicy;
+	private _decisionState?: DecisionState;
+	private _modelRouter!: ModelRouter;
+	private _strategyController!: StrategyController;
+
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
@@ -437,12 +459,43 @@ export class AgentSession {
 		this._installAgentRequestProjection();
 		this._installAgentBoundaryHooks();
 		this._installAgentForcedPromptProjection();
+		this._initDecisionSubsystem(config.decisionEngine);
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
 			includeAllExtensionTools: true,
 		});
 		if (this._initialActiveToolNames === undefined) this._restoreToolsFromTranscript();
+	}
+
+	private _initDecisionSubsystem(decisionEngineOverride?: DecisionEngine): void {
+		const jevSettings = this.settingsManager.getJevSettings();
+		this._decisionEngine =
+			decisionEngineOverride ??
+			new StandardDecisionEngine({
+				mode: jevSettings.mode,
+				jevOptions: {
+					defaultModel: jevSettings.model,
+					timeoutMs: jevSettings.timeoutMs,
+					maxRetries: jevSettings.maxRetries,
+				},
+				cacheTtlMs: jevSettings.cacheTtlMs,
+			});
+		this._decisionPolicy = new DecisionPolicy(jevSettings.thresholds);
+		this._modelRouter = new ModelRouter(
+			jevSettings.modelTiers,
+			this._scopedModels.map((sm) => sm.model),
+			this.agent.state.model,
+		);
+		this._strategyController = new StrategyController();
+	}
+
+	get decisionEngine(): DecisionEngine {
+		return this._decisionEngine;
+	}
+
+	get decisionState(): DecisionState | undefined {
+		return this._decisionState;
 	}
 
 	get modelRuntime(): ModelRuntime {
@@ -528,6 +581,42 @@ export class AgentSession {
 	 */
 	private _installAgentToolHooks(): void {
 		this.agent.beforeToolCall = async ({ toolCall, args }) => {
+			// 1. System-1 Decision Layer Preflight
+			const jevSettings = this.settingsManager.getJevSettings();
+			if (jevSettings.enabled && jevSettings.mode !== "off" && this._decisionState) {
+				const isRoutineSafeTool = ["read", "grep", "find", "ls"].includes(toolCall.name);
+				if (!isRoutineSafeTool) {
+					const argsSummary = typeof args === "object" && args !== null ? JSON.stringify(args) : String(args);
+					const isDestructive =
+						toolCall.name === "bash"
+							? /rm\s+-|chmod|chown|kill|git\s+push|git\s+reset|dd\s+|mkfs|sudo/i.test(argsSummary)
+							: toolCall.name === "write" || toolCall.name === "edit";
+
+					this._decisionState.proposedTool = {
+						name: toolCall.name,
+						argumentsSummary: argsSummary.slice(0, 300),
+						paths: [],
+						isDestructiveCandidate: isDestructive,
+					};
+
+					if (isDestructive) {
+						try {
+							const decisionResult = await this._decisionEngine.decide(this._decisionState, TOOL_RISK_V1);
+							const policyEvaluation = this._decisionPolicy.evaluateToolRisk(decisionResult.answers);
+							if (jevSettings.mode === "enforced" && policyEvaluation.authorization === "block") {
+								return {
+									block: true,
+									reason: policyEvaluation.reason,
+								};
+							}
+						} catch {
+							// In error scenarios, allow deterministic policy to remain authoritative
+						}
+					}
+				}
+			}
+
+			// 2. Extension runner preflight
 			const runner = this._extensionRunner;
 			if (!runner.hasHandlers("tool_call")) {
 				return undefined;
@@ -549,6 +638,42 @@ export class AgentSession {
 		};
 
 		this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
+			// 1. Update DecisionState with tool outcome
+			if (this._decisionState) {
+				const argsSummary = typeof args === "object" && args !== null ? JSON.stringify(args) : String(args);
+				const errorSnippet = isError
+					? typeof result.content === "string"
+						? result.content
+						: JSON.stringify(result.content)
+					: undefined;
+
+				this._decisionState = recordToolResultToState(this._decisionState, {
+					toolName: toolCall.name,
+					argsSummary: argsSummary.slice(0, 200),
+					isError,
+					errorSnippet: errorSnippet?.slice(0, 300),
+				});
+
+				const jevSettings = this.settingsManager.getJevSettings();
+				if (
+					jevSettings.enabled &&
+					jevSettings.mode === "enforced" &&
+					(isError || this._decisionState.execution.oscillationCount >= 3)
+				) {
+					try {
+						const strategyResult = await this._decisionEngine.decide(this._decisionState, STRATEGY_SUPERVISOR_V1);
+						const directive = this._strategyController.createDirective(
+							strategyResult.answers.strategyAction?.choice || "continue",
+							this._decisionState,
+						);
+						if (directive.shouldInjectSteering && directive.steeringMessage) {
+							await this.steer(directive.steeringMessage);
+						}
+					} catch {
+						// Graceful fallback
+					}
+				}
+			}
 			const runner = this._extensionRunner;
 			const hookResult = runner.hasHandlers("tool_result")
 				? await runner.emitToolResult({
@@ -1669,6 +1794,39 @@ export class AgentSession {
 			// Flush any pending bash and custom messages before the new prompt
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
+
+			// Initialize or update DecisionState
+			if (!this._decisionState) {
+				this._decisionState = createInitialDecisionState({
+					intent: expandedText,
+					initialModel: this.model?.id,
+				});
+			} else {
+				this._decisionState.task.intent = expandedText;
+			}
+
+			// System-1 Task Routing
+			const jevSettings = this.settingsManager.getJevSettings();
+			if (jevSettings.enabled && jevSettings.mode !== "off") {
+				try {
+					const routeResult = await this._decisionEngine.decide(this._decisionState, TASK_ROUTING_V1);
+					const policyRoute = this._decisionPolicy.evaluateModelTierRouting(
+						routeResult.answers,
+						this._decisionState.model.currentTier,
+					);
+					this._decisionState.model.currentTier = policyRoute.tier;
+					this._decisionState.model.confidence = policyRoute.confidence;
+
+					if (jevSettings.mode === "enforced" && this.model) {
+						const targetModel = this._modelRouter.resolveModelForTier(policyRoute.tier);
+						if (targetModel && !modelsAreEqual(targetModel, this.model)) {
+							await this.setModel(targetModel);
+						}
+					}
+				} catch {
+					// Fallback gracefully to default model
+				}
+			}
 
 			// Validate model
 			if (!this.model) {
@@ -2817,12 +2975,15 @@ export class AgentSession {
 				details = extensionCompaction.details;
 			} else {
 				// Shared default summary generator, also used by manual compaction.
+				const semanticPreamble = this._decisionState
+					? buildSemanticCompactionPreamble(this._decisionState)
+					: undefined;
 				const compactResult = await this._runDefaultCompaction(
 					preparation,
 					requestModel,
 					apiKey,
 					headers,
-					undefined,
+					semanticPreamble,
 					abortController.signal,
 					env,
 					reason,

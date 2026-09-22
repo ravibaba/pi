@@ -8,7 +8,24 @@ import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import { DEFAULT_THRESHOLDS, type JevThresholds } from "./decision/thresholds.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
+
+export interface JevSettings {
+	enabled?: boolean; // default: true
+	mode?: "off" | "shadow" | "advisory" | "enforced"; // default: "shadow"
+	model?: string; // default: "jev-latest"
+	timeoutMs?: number; // default: 1500
+	maxRetries?: number; // default: 1
+	cacheTtlMs?: number; // default: 60000
+	thresholds?: Partial<JevThresholds>;
+	modelTiers?: {
+		fast?: string;
+		standard?: string;
+		reasoning?: string;
+		deep?: string;
+	};
+}
 
 export interface CompactionModelOverride {
 	reserveTokens?: number;
@@ -160,6 +177,7 @@ export interface Settings {
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
 	fullscreenCopyOnSelect?: boolean; // default: true; no effect in regular TUI mode
+	jev?: JevSettings; // System-1 decision subsystem settings
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -935,6 +953,29 @@ export class SettingsManager {
 			maxRetries: this.settings.retry?.maxRetries ?? 3,
 			baseDelayMs: this.settings.retry?.baseDelayMs ?? 2000,
 			maxAgentDelayMs: this.settings.retry?.maxAgentDelayMs ?? DEFAULT_MAX_AGENT_RETRY_DELAY_MS,
+		};
+	}
+
+	getJevSettings(): Required<Omit<JevSettings, "thresholds" | "modelTiers">> & {
+		thresholds: JevThresholds;
+		modelTiers: NonNullable<JevSettings["modelTiers"]>;
+	} {
+		const jev = this.settings.jev;
+		const hasApiKey = Boolean(process.env.TYPESAFE_API_KEY);
+		const defaultMode = hasApiKey ? "shadow" : "off";
+
+		return {
+			enabled: jev?.enabled ?? hasApiKey,
+			mode: jev?.mode ?? defaultMode,
+			model: jev?.model ?? "jev-latest",
+			timeoutMs: jev?.timeoutMs ?? 1500,
+			maxRetries: jev?.maxRetries ?? 1,
+			cacheTtlMs: jev?.cacheTtlMs ?? 60_000,
+			thresholds: {
+				...DEFAULT_THRESHOLDS,
+				...(jev?.thresholds ?? {}),
+			},
+			modelTiers: jev?.modelTiers ?? {},
 		};
 	}
 
