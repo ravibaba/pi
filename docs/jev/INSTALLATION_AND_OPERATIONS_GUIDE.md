@@ -76,37 +76,51 @@ Pi has been transformed from an LLM-centric agent into a **decision-native harne
 
 ---
 
-## 2. Installation on macOS
+## 2. Installation on macOS (Side-by-Side with Existing Pi)
 
-You can install and run Pi from this local repository using any of the three methods below. **Method 1 is recommended for local development and testing.**
+You currently have an active Pi installation at `/Users/ravi/.bun/bin/pi`. To prevent any binary collisions or PATH conflicts, install this development build as a dedicated `pi-jev` command.
 
-### Method 1: Source Symlink (Recommended for Testing & Development)
+### Recommended Method: Alias / Symlink as `pi-jev` (Zero Conflict)
 
-This method runs directly against the TypeScript source code using `tsx`, meaning any edits or changes in the codebase are immediately active without needing to rebuild.
+This runs directly against this repository's TypeScript sources using `tsx`. Your existing `pi` binary remains untouched, while any changes you make in this repo are immediately active in `pi-jev`.
 
-1. Ensure dependencies are installed:
+1. Ensure dependencies are hydrated:
    ```bash
    cd /Users/ravi/Desktop/PI-JEV/pi
    npm install --ignore-scripts
    ```
 
-2. Make sure your local bin directory is in your `PATH` (typically `~/.local/bin` or `/usr/local/bin`):
+2. Symlink the test script as `pi-jev` in `~/.local/bin`:
    ```bash
    mkdir -p ~/.local/bin
-   # Add to ~/.zshrc if not already present:
-   # export PATH="$HOME/.local/bin:$PATH"
-   ```
-
-3. Create a symlink to the repository test runner script:
-   ```bash
-   ln -sf /Users/ravi/Desktop/PI-JEV/pi/pi-test.sh ~/.local/bin/pi
+   ln -sf /Users/ravi/Desktop/PI-JEV/pi/pi-test.sh ~/.local/bin/pi-jev
    chmod +x /Users/ravi/Desktop/PI-JEV/pi/pi-test.sh
    ```
 
-4. Verify installation:
+   *Alternatively, add an alias to your `~/.zshrc`:*
    ```bash
-   pi --version
+   alias pi-jev="/Users/ravi/Desktop/PI-JEV/pi/pi-test.sh"
    ```
+
+3. Verify both commands:
+   ```bash
+   # Your existing standard installation:
+   which pi       # Output: /Users/ravi/.bun/bin/pi
+
+   # Your Jev-enabled harness:
+   which pi-jev   # Output: /Users/ravi/.local/bin/pi-jev
+   ```
+
+---
+
+### Configuration Isolation (Optional)
+
+Pi automatically merges settings from:
+1. Global settings: `~/.pi/agent/settings.json`
+2. Project-level settings: `<working-directory>/.pi/settings.json`
+
+Because Pi ignores unrecognized configuration keys, adding the `"jev"` block to `~/.pi/agent/settings.json` will not break your existing Bun `pi` install. However, if you want complete separation:
+- Place your `jev` settings inside a `.pi/settings.json` file inside the repository or workspace where you want to test `pi-jev`. Project settings override global settings for that workspace.
 
 ---
 
