@@ -71,6 +71,23 @@ import {
 	prepareCompaction,
 	shouldCompact,
 } from "./compaction/index.ts";
+import {
+	buildSemanticCompactionPreamble,
+	COMPLETION_VERIFICATION_V1,
+	createInitialDecisionState,
+	type DecisionEngine,
+	DecisionPolicy,
+	type DecisionState,
+	extractContextFromMessages,
+	ModelRouter,
+	type ModelTier,
+	recordToolResultToState,
+	STRATEGY_SUPERVISOR_V1,
+	StandardDecisionEngine,
+	StrategyController,
+	TASK_ROUTING_V1,
+	TOOL_RISK_V1,
+} from "./decision/index.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "./defaults.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
@@ -130,6 +147,7 @@ import {
 } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
+import { createJevTools, JEV_TOOL_PROMPT_CONTRIBUTIONS } from "./tools/jev/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
@@ -178,6 +196,13 @@ export type AgentSessionEvent =
 	| { type: "entry_appended"; entry: SessionEntry }
 	| { type: "session_info_changed"; name: string | undefined }
 	| { type: "thinking_level_changed"; level: ThinkingLevel }
+	| {
+			type: "model_changed";
+			model: Model<any>;
+			previousModel: Model<any> | undefined;
+			tier?: ModelTier;
+			source?: "set" | "cycle" | "restore" | "jev_routing" | "jev_escalation";
+	  }
 	| {
 			type: "compaction_end";
 			reason: "manual" | "threshold" | "overflow";
@@ -249,6 +274,8 @@ export interface AgentSessionConfig {
 	extensionRunnerRef?: { current?: ExtensionRunner };
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
+	/** Optional decision engine override (useful for testing or custom harnesses) */
+	decisionEngine?: DecisionEngine;
 }
 
 export interface ExtensionBindings {
@@ -278,6 +305,8 @@ export interface PromptOptions {
 export interface ModelMutationOptions {
 	/** Persist the new value to global defaults. Defaults to session-only. */
 	persist?: boolean;
+	/** Trigger source for telemetry and UI status */
+	source?: "set" | "cycle" | "restore" | "jev_routing" | "jev_escalation";
 }
 
 /** Result from cycleModel() */
@@ -409,6 +438,13 @@ export class AgentSession {
 	/** Prompt options after before_agent_start mutations for the active run. */
 	private _runSystemPromptOptions?: NormalizedBuildSystemPromptOptions;
 
+	private _decisionEngine!: DecisionEngine;
+	private _decisionPolicy!: DecisionPolicy;
+	private _decisionState?: DecisionState;
+	private _modelRouter!: ModelRouter;
+	private _strategyController!: StrategyController;
+	private _completionRejections = 0;
+
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
@@ -437,12 +473,60 @@ export class AgentSession {
 		this._installAgentRequestProjection();
 		this._installAgentBoundaryHooks();
 		this._installAgentForcedPromptProjection();
+		this._initDecisionSubsystem(config.decisionEngine);
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
 			includeAllExtensionTools: true,
 		});
 		if (this._initialActiveToolNames === undefined) this._restoreToolsFromTranscript();
+	}
+
+	private _initDecisionSubsystem(decisionEngineOverride?: DecisionEngine): void {
+		const jevSettings = this.settingsManager.getJevSettings();
+		this._decisionEngine =
+			decisionEngineOverride ??
+			new StandardDecisionEngine({
+				mode: jevSettings.mode,
+				jevOptions: {
+					defaultModel: jevSettings.model,
+					timeoutMs: jevSettings.timeoutMs,
+					maxRetries: jevSettings.maxRetries,
+				},
+				cacheTtlMs: jevSettings.cacheTtlMs,
+			});
+		this._decisionPolicy = new DecisionPolicy(jevSettings.thresholds);
+		this._modelRouter = new ModelRouter(
+			jevSettings.modelTiers,
+			this._scopedModels.map((sm) => sm.model),
+			this.agent.state.model,
+		);
+		this._strategyController = new StrategyController();
+
+		if (jevSettings.enabled && jevSettings.mode !== "off") {
+			const jevTools = createJevTools(
+				this._cwd,
+				() => this._decisionState,
+				() => this._decisionEngine,
+			);
+			for (const tool of jevTools) {
+				const def = createToolDefinitionFromAgentTool(tool);
+				const contribution = JEV_TOOL_PROMPT_CONTRIBUTIONS[tool.name];
+				if (contribution) {
+					def.promptSnippet = contribution.snippet;
+					def.promptGuidelines = [...contribution.guidelines];
+				}
+				this._customTools.push(def);
+			}
+		}
+	}
+
+	get decisionEngine(): DecisionEngine {
+		return this._decisionEngine;
+	}
+
+	get decisionState(): DecisionState | undefined {
+		return this._decisionState;
 	}
 
 	get modelRuntime(): ModelRuntime {
@@ -528,6 +612,42 @@ export class AgentSession {
 	 */
 	private _installAgentToolHooks(): void {
 		this.agent.beforeToolCall = async ({ toolCall, args }) => {
+			// 1. System-1 Decision Layer Preflight
+			const jevSettings = this.settingsManager.getJevSettings();
+			if (jevSettings.enabled && jevSettings.mode !== "off" && this._decisionState) {
+				const isRoutineSafeTool = ["read", "grep", "find", "ls"].includes(toolCall.name);
+				if (!isRoutineSafeTool) {
+					const argsSummary = typeof args === "object" && args !== null ? JSON.stringify(args) : String(args);
+					const isDestructive =
+						toolCall.name === "bash"
+							? /rm\s+-|chmod|chown|kill|git\s+push|git\s+reset|dd\s+|mkfs|sudo/i.test(argsSummary)
+							: toolCall.name === "write" || toolCall.name === "edit";
+
+					this._decisionState.proposedTool = {
+						name: toolCall.name,
+						argumentsSummary: argsSummary.slice(0, 300),
+						paths: [],
+						isDestructiveCandidate: isDestructive,
+					};
+
+					if (isDestructive) {
+						try {
+							const decisionResult = await this._decisionEngine.decide(this._decisionState, TOOL_RISK_V1);
+							const policyEvaluation = this._decisionPolicy.evaluateToolRisk(decisionResult.answers);
+							if (jevSettings.mode === "enforced" && policyEvaluation.authorization === "block") {
+								return {
+									block: true,
+									reason: policyEvaluation.reason,
+								};
+							}
+						} catch {
+							// In error scenarios, allow deterministic policy to remain authoritative
+						}
+					}
+				}
+			}
+
+			// 2. Extension runner preflight
 			const runner = this._extensionRunner;
 			if (!runner.hasHandlers("tool_call")) {
 				return undefined;
@@ -549,6 +669,63 @@ export class AgentSession {
 		};
 
 		this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
+			this._completionRejections = 0;
+			// 1. Update DecisionState with tool outcome
+			if (this._decisionState) {
+				const argsSummary = typeof args === "object" && args !== null ? JSON.stringify(args) : String(args);
+				const errorSnippet = isError
+					? typeof result.content === "string"
+						? result.content
+						: JSON.stringify(result.content)
+					: undefined;
+
+				this._decisionState = recordToolResultToState(this._decisionState, {
+					toolName: toolCall.name,
+					argsSummary: argsSummary.slice(0, 200),
+					isError,
+					errorSnippet: errorSnippet?.slice(0, 300),
+				});
+
+				const jevSettings = this.settingsManager.getJevSettings();
+				if (
+					jevSettings.enabled &&
+					jevSettings.mode === "enforced" &&
+					(isError || this._decisionState.execution.oscillationCount >= 3)
+				) {
+					try {
+						const strategyResult = await this._decisionEngine.decide(this._decisionState, STRATEGY_SUPERVISOR_V1);
+						const directive = this._strategyController.createDirective(
+							strategyResult.answers.strategyAction?.choice || "continue",
+							this._decisionState,
+						);
+						if (directive.shouldInjectSteering && directive.steeringMessage) {
+							await this.steer(directive.steeringMessage);
+						}
+
+						// Adaptive mid-task reasoning & model tier escalation
+						if (
+							this._decisionState.execution.consecutiveFailures >= 2 ||
+							this._decisionState.execution.oscillationCount >= 3
+						) {
+							if (
+								this._decisionState.model.currentTier === "fast" ||
+								this._decisionState.model.currentTier === "standard"
+							) {
+								const targetModel = this._modelRouter.resolveModelForTier("reasoning");
+								if (targetModel && !modelsAreEqual(targetModel, this.agent.state.model)) {
+									this._decisionState.model.currentTier = "reasoning";
+									this._decisionState.execution.strategyChanges++;
+									await this.setModel(targetModel, { source: "jev_escalation" });
+								} else if (this.agent.state.model.reasoning) {
+									this.setThinkingLevel("high");
+								}
+							}
+						}
+					} catch {
+						// Graceful fallback
+					}
+				}
+			}
 			const runner = this._extensionRunner;
 			const hookResult = runner.hasHandlers("tool_result")
 				? await runner.emitToolResult({
@@ -680,6 +857,44 @@ export class AgentSession {
 			const previousDecision = await previousFinishTurn?.(turn, signal);
 			if (previousDecision?.action === "end") return previousDecision;
 			if (extensionContinue || previousDecision?.action === "continue") return { action: "continue" };
+
+			// System-1 Completion Verification Gate
+			const jevSettings = this.settingsManager.getJevSettings();
+			if (
+				jevSettings.enabled &&
+				jevSettings.mode !== "off" &&
+				this._decisionState &&
+				turn.toolResults.length === 0 &&
+				turn.message.stopReason === "stop"
+			) {
+				const hasChanges = this._decisionState.execution.filesChanged.length > 0;
+				const isFailing = this._decisionState.verification.testStatus === "failing";
+
+				if (hasChanges || isFailing) {
+					try {
+						const decisionResult = await this._decisionEngine.decide(
+							this._decisionState,
+							COMPLETION_VERIFICATION_V1,
+						);
+						const completionEval = this._decisionPolicy.evaluateCompletion(decisionResult.answers);
+
+						if (completionEval.isComplete && !isFailing) {
+							this._decisionState.execution.phase = "complete";
+						} else if (jevSettings.mode === "enforced" && this._completionRejections < 1) {
+							this._completionRejections++;
+							// In enforced mode, reject premature turn completion when verification fails
+							const directive = isFailing
+								? "Verification failed: Tests are currently failing. Please investigate and fix test failures before finishing."
+								: `Verification incomplete: ${completionEval.reason}. Please run tests or verify the solution before completing.`;
+							await this.steer(directive);
+							return { action: "continue" };
+						}
+					} catch {
+						// Graceful fallback allows normal completion
+					}
+				}
+			}
+
 			return undefined;
 		};
 	}
@@ -698,11 +913,14 @@ export class AgentSession {
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.({ ...turn, context }, signal);
 			const nextContext = previousSnapshot?.context ?? context;
 			const runOptions = this._runSystemPromptOptions ?? this._baseSystemPromptOptions;
+			const jevSettings = this.settingsManager.getJevSettings();
 			const options = normalizeBuildSystemPromptOptions({
 				...runOptions,
 				selectedTools: this.getActiveToolNames(),
 				toolSnippets: { ...this._baseSystemPromptOptions.toolSnippets, ...runOptions.toolSnippets },
 				toolGuidelines: { ...this._baseSystemPromptOptions.toolGuidelines, ...runOptions.toolGuidelines },
+				decisionState: this._decisionState,
+				jevMode: jevSettings.enabled ? jevSettings.mode : undefined,
 			});
 			const updateMessage = this._preparePromptAndToolLoadout(options, nextContext.messages);
 			// Keep session.systemPrompt and ctx.getSystemPrompt() in step with what the provider sees.
@@ -1382,6 +1600,7 @@ export class AgentSession {
 		const loadedSkills = this._resourceLoader.getSkills().skills;
 		const loadedContextFiles = this._resourceLoader.getAgentsFiles().agentsFiles;
 
+		const jevSettings = this.settingsManager.getJevSettings();
 		this._baseSystemPromptOptions = normalizeBuildSystemPromptOptions({
 			cwd: this._cwd,
 			skills: loadedSkills,
@@ -1391,6 +1610,8 @@ export class AgentSession {
 			selectedTools: validToolNames,
 			toolSnippets,
 			toolGuidelines: Object.fromEntries(this._toolPromptGuidelines),
+			decisionState: this._decisionState,
+			jevMode: jevSettings.enabled ? jevSettings.mode : undefined,
 		});
 	}
 
@@ -1669,6 +1890,40 @@ export class AgentSession {
 			// Flush any pending bash and custom messages before the new prompt
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
+			this._completionRejections = 0;
+
+			// Initialize or update DecisionState
+			if (!this._decisionState) {
+				this._decisionState = createInitialDecisionState({
+					intent: expandedText,
+					initialModel: this.model?.id,
+				});
+			} else {
+				this._decisionState.task.intent = expandedText;
+			}
+
+			// System-1 Task Routing
+			const jevSettings = this.settingsManager.getJevSettings();
+			if (jevSettings.enabled && jevSettings.mode !== "off") {
+				try {
+					const routeResult = await this._decisionEngine.decide(this._decisionState, TASK_ROUTING_V1);
+					const policyRoute = this._decisionPolicy.evaluateModelTierRouting(
+						routeResult.answers,
+						this._decisionState.model.currentTier,
+					);
+					this._decisionState.model.currentTier = policyRoute.tier;
+					this._decisionState.model.confidence = policyRoute.confidence;
+
+					if (jevSettings.mode === "enforced" && this.model) {
+						const targetModel = this._modelRouter.resolveModelForTier(policyRoute.tier);
+						if (targetModel && !modelsAreEqual(targetModel, this.model)) {
+							await this.setModel(targetModel, { source: "jev_routing" });
+						}
+					}
+				} catch {
+					// Fallback gracefully to default model
+				}
+			}
 
 			// Validate model
 			if (!this.model) {
@@ -2134,6 +2389,14 @@ export class AgentSession {
 		// Model persistence does not implicitly rewrite the global thinking default.
 		this.setThinkingLevel(thinkingLevel);
 
+		this._emit({
+			type: "model_changed",
+			model,
+			previousModel,
+			tier: this._decisionState?.model?.currentTier,
+			source: options.source ?? "set",
+		});
+
 		await this._emitModelSelect(model, previousModel, "set");
 	}
 
@@ -2203,6 +2466,14 @@ export class AgentSession {
 		// Model persistence does not implicitly rewrite the global thinking default.
 		this.setThinkingLevel(thinkingLevel);
 
+		this._emit({
+			type: "model_changed",
+			model: next.model,
+			previousModel: currentModel,
+			tier: this._decisionState?.model?.currentTier,
+			source: options.source ?? "cycle",
+		});
+
 		await this._emitModelSelect(next.model, currentModel, "cycle");
 
 		return { model: next.model, thinkingLevel: this.thinkingLevel, isScoped: true };
@@ -2234,6 +2505,14 @@ export class AgentSession {
 		// Apply thinking level for the new model.
 		// Model persistence does not implicitly rewrite the global thinking default.
 		this.setThinkingLevel(thinkingLevel);
+
+		this._emit({
+			type: "model_changed",
+			model: nextModel,
+			previousModel: currentModel,
+			tier: this._decisionState?.model?.currentTier,
+			source: options.source ?? "cycle",
+		});
 
 		await this._emitModelSelect(nextModel, currentModel, "cycle");
 
@@ -2817,12 +3096,18 @@ export class AgentSession {
 				details = extensionCompaction.details;
 			} else {
 				// Shared default summary generator, also used by manual compaction.
+				if (this._decisionState) {
+					this._decisionState = extractContextFromMessages(this._decisionState, preparation.messagesToSummarize);
+				}
+				const semanticPreamble = this._decisionState
+					? buildSemanticCompactionPreamble(this._decisionState)
+					: undefined;
 				const compactResult = await this._runDefaultCompaction(
 					preparation,
 					requestModel,
 					apiKey,
 					headers,
-					undefined,
+					semanticPreamble,
 					abortController.signal,
 					env,
 					reason,

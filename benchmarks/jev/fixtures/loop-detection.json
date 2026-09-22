@@ -1,0 +1,38 @@
+[
+	{
+		"id": "loop-healthy-1",
+		"consecutiveFailures": 0,
+		"oscillationCount": 0,
+		"repeatedActions": 0,
+		"phase": "implement",
+		"expectedAction": "continue",
+		"isStalled": false
+	},
+	{
+		"id": "loop-retry-1",
+		"consecutiveFailures": 1,
+		"oscillationCount": 0,
+		"repeatedActions": 0,
+		"lastError": "TS2304: Cannot find name 'foo'",
+		"expectedAction": "retry",
+		"isStalled": false
+	},
+	{
+		"id": "loop-stall-repeated-errors-1",
+		"consecutiveFailures": 4,
+		"oscillationCount": 1,
+		"repeatedActions": 3,
+		"lastError": "Error: Port 8080 already in use",
+		"expectedAction": "change_strategy",
+		"isStalled": true
+	},
+	{
+		"id": "loop-stall-oscillation-1",
+		"consecutiveFailures": 2,
+		"oscillationCount": 4,
+		"repeatedActions": 2,
+		"lastError": "SyntaxError: Unexpected token",
+		"expectedAction": "change_strategy",
+		"isStalled": true
+	}
+]

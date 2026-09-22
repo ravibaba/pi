@@ -23,6 +23,7 @@ import type {
 	StopReason,
 	TextContent,
 	ThinkingContent,
+	ThinkingLevel,
 	ToolCall,
 	TranscriptContext,
 	Usage,
@@ -30,6 +31,7 @@ import type {
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { AgentSession, type AgentSessionEvent } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
+import type { DecisionEngine } from "../src/core/decision/index.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import type { Settings } from "../src/core/settings-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
@@ -348,6 +350,10 @@ export interface HarnessOptions {
 	resourceLoader?: ResourceLoader;
 	/** Inline extensions to load into the session resource loader. */
 	extensionFactories?: Array<InlineExtension | CreateTestExtensionsResultInput>;
+	/** Scoped models for switching. */
+	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	/** Optional decision engine override. */
+	decisionEngine?: DecisionEngine;
 }
 
 export interface Harness {
@@ -404,22 +410,21 @@ async function createHarnessWithResourceLoader(
 		[model.provider]: { type: "api_key", key: "faux-key" },
 	});
 	const modelRegistry = await createInMemoryModelRegistry(authStorage);
+	const allModels = [model, ...(options.scopedModels?.map((sm) => sm.model) ?? [])];
 	modelRegistry.registerProvider(model.provider, {
 		baseUrl: model.baseUrl,
 		api: model.api,
-		models: [
-			{
-				id: model.id,
-				name: model.name,
-				api: model.api,
-				reasoning: model.reasoning,
-				input: model.input,
-				cost: model.cost,
-				contextWindow: model.contextWindow,
-				maxTokens: model.maxTokens,
-				baseUrl: model.baseUrl,
-			},
-		],
+		models: allModels.map((m) => ({
+			id: m.id,
+			name: m.name,
+			api: m.api,
+			reasoning: m.reasoning,
+			input: m.input,
+			cost: m.cost,
+			contextWindow: m.contextWindow,
+			maxTokens: m.maxTokens,
+			baseUrl: m.baseUrl,
+		})),
 	});
 
 	const session = new AgentSession({
@@ -429,7 +434,9 @@ async function createHarnessWithResourceLoader(
 		cwd: tempDir,
 		modelRuntime: getModelRuntime(modelRegistry),
 		resourceLoader,
+		scopedModels: options.scopedModels,
 		baseToolsOverride: options.baseToolsOverride,
+		decisionEngine: options.decisionEngine,
 	});
 
 	const events: AgentSessionEvent[] = [];

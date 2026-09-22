@@ -1,0 +1,44 @@
+[
+	{
+		"id": "route-fast-1",
+		"intent": "Fix typo in variable name in logger.ts: chache -> cache",
+		"expectedTier": "fast",
+		"expectedComplexityScore": 1
+	},
+	{
+		"id": "route-fast-2",
+		"intent": "Add a comment explaining the purpose of timeoutMs parameter",
+		"expectedTier": "fast",
+		"expectedComplexityScore": 1
+	},
+	{
+		"id": "route-standard-1",
+		"intent": "Implement a helper function to format dates as ISO strings with millisecond precision",
+		"expectedTier": "standard",
+		"expectedComplexityScore": 2
+	},
+	{
+		"id": "route-standard-2",
+		"intent": "Add unit tests covering edge cases for the exponential backoff calculation",
+		"expectedTier": "standard",
+		"expectedComplexityScore": 2
+	},
+	{
+		"id": "route-reasoning-1",
+		"intent": "Debug an intermittent race condition where concurrent sqlite transactions deadlock under high write load",
+		"expectedTier": "reasoning",
+		"expectedComplexityScore": 4
+	},
+	{
+		"id": "route-reasoning-2",
+		"intent": "Refactor session state synchronization across worker threads without changing external RPC protocol",
+		"expectedTier": "reasoning",
+		"expectedComplexityScore": 4
+	},
+	{
+		"id": "route-deep-1",
+		"intent": "Formally verify and redesign the distributed Raft consensus state machine to support dynamic cluster membership changes",
+		"expectedTier": "deep",
+		"expectedComplexityScore": 5
+	}
+]

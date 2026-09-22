@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -e
+
+# Canonical script directory resolution (handling symlinks)
+TARGET="${BASH_SOURCE[0]}"
+while [ -L "$TARGET" ]; do
+  TARGET_DIR="$(cd -P "$(dirname "$TARGET")" >/dev/null 2>&1 && pwd)"
+  TARGET="$(readlink "$TARGET")"
+  [[ $TARGET != /* ]] && TARGET="$TARGET_DIR/$TARGET"
+done
+BIN_DIR="$(cd -P "$(dirname "$TARGET")" >/dev/null 2>&1 && pwd)"
+REPO_DIR="$(cd -P "$BIN_DIR/.." >/dev/null 2>&1 && pwd)"
+
+# Default session environment for provider and model if not already set
+export PI_PROVIDER="${PI_PROVIDER:-openrouter}"
+export PI_MODEL="${PI_MODEL:-nvidia/nemotron-3-ultra-550b-a55b:free}"
+
+# Check if model or provider was explicitly passed in arguments
+has_model=false
+has_provider=false
+for arg in "$@"; do
+  case "$arg" in
+    --model|--model=*) has_model=true ;;
+    --provider|--provider=*) has_provider=true ;;
+  esac
+done
+
+# Detect non-chat subcommands where --provider/--model should not be injected
+first_arg="${1:-}"
+is_subcommand=false
+case "$first_arg" in
+  install|remove|uninstall|update|list|config|auth) is_subcommand=true ;;
+esac
+
+CLI_ARGS=("$@")
+if [ "$is_subcommand" = "false" ]; then
+  if [ "$has_provider" = "false" ] && [ -n "$PI_PROVIDER" ]; then
+    CLI_ARGS=("--provider" "$PI_PROVIDER" "${CLI_ARGS[@]}")
+  fi
+  if [ "$has_model" = "false" ] && [ -n "$PI_MODEL" ]; then
+    CLI_ARGS=("--model" "$PI_MODEL" "${CLI_ARGS[@]}")
+  fi
+fi
+
+DIST_BIN="$REPO_DIR/packages/coding-agent/dist/bundle/cli.js"
+
+if [ "${DEV:-0}" = "1" ] || [ "${DEV:-0}" = "true" ]; then
+  # Development mode: run TypeScript source directly via tsx
+  if [ ! -f "$REPO_DIR/node_modules/.bin/tsx" ]; then
+    echo "Error: $REPO_DIR/node_modules/.bin/tsx not found. Run 'npm install --ignore-scripts' in $REPO_DIR first." >&2
+    exit 1
+  fi
+  exec "$REPO_DIR/node_modules/.bin/tsx" --tsconfig "$REPO_DIR/tsconfig.json" "$REPO_DIR/packages/coding-agent/src/cli.ts" "${CLI_ARGS[@]}"
+else
+  # Production mode: run precompiled bundle
+  if [ ! -f "$DIST_BIN" ]; then
+    echo "Error: Compiled binary not found at $DIST_BIN." >&2
+    echo "Run 'npm run build' in $REPO_DIR to build, or run with 'DEV=1 pi ...' to run from source." >&2
+    exit 1
+  fi
+  exec node "$DIST_BIN" "${CLI_ARGS[@]}"
+fi

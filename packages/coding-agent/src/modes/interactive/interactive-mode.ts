@@ -3374,6 +3374,22 @@ export class InteractiveMode {
 				this.updateEditorBorderColor();
 				break;
 
+			case "model_changed": {
+				this.footer.invalidate();
+				this.updateEditorBorderColor();
+				const sourceLabel =
+					event.source === "jev_escalation"
+						? ` [escalated to ${event.tier ?? "reasoning"}]`
+						: event.source === "jev_routing"
+							? ` [routed to ${event.tier ?? "standard"}]`
+							: "";
+				if (event.source === "jev_escalation" || event.source === "jev_routing") {
+					this.showStatus(`Model: ${event.model.name || event.model.id}${sourceLabel}`);
+				}
+				this.ui.requestRender();
+				break;
+			}
+
 			case "message_start":
 				if (event.message.role === "custom") {
 					this.addMessageToChat(event.message);
