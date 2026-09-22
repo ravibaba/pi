@@ -63,6 +63,31 @@ describe("model-router", () => {
 		expect(model?.id).toBe("claude-3-5-sonnet-latest");
 	});
 
+	it("should resolve models by provider/model or provider:model reference", () => {
+		const openRouterModel = {
+			id: "anthropic/claude-3.5-sonnet",
+			name: "Anthropic: Claude 3.5 Sonnet",
+			provider: "openrouter",
+			api: "openai-completions",
+			contextWindow: 200_000,
+			maxOutputTokens: 8192,
+		} as unknown as Model<Api>;
+
+		const routerSlash = new ModelRouter(
+			{ standard: "openrouter/anthropic/claude-3.5-sonnet" },
+			[...mockModels, openRouterModel],
+			defaultModel,
+		);
+		expect(routerSlash.resolveModelForTier("standard")?.id).toBe("anthropic/claude-3.5-sonnet");
+
+		const routerColon = new ModelRouter(
+			{ standard: "openrouter:anthropic/claude-3.5-sonnet" },
+			[...mockModels, openRouterModel],
+			defaultModel,
+		);
+		expect(routerColon.resolveModelForTier("standard")?.id).toBe("anthropic/claude-3.5-sonnet");
+	});
+
 	it("should compute correct escalated tiers", () => {
 		expect(ModelRouter.getEscalatedTier("fast")).toBe("standard");
 		expect(ModelRouter.getEscalatedTier("standard")).toBe("reasoning");

@@ -66,9 +66,17 @@ export class ModelRouter {
 
 	private _findModel(reference: string): Model<Api> | undefined {
 		const ref = reference.toLowerCase().trim();
+		const refNormalized = ref.replace(":", "/");
 		return this._availableModels.find((m) => {
-			const full = `${m.provider}/${m.id}`.toLowerCase();
-			return full === ref || m.id.toLowerCase() === ref || m.name?.toLowerCase() === ref;
+			const fullSlash = `${m.provider}/${m.id}`.toLowerCase();
+			const fullColon = `${m.provider}:${m.id}`.toLowerCase();
+			return (
+				fullSlash === ref ||
+				fullColon === ref ||
+				fullSlash === refNormalized ||
+				m.id.toLowerCase() === ref ||
+				m.name?.toLowerCase() === ref
+			);
 		});
 	}
 

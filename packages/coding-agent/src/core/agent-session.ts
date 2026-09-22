@@ -432,6 +432,7 @@ export class AgentSession {
 	private _decisionState?: DecisionState;
 	private _modelRouter!: ModelRouter;
 	private _strategyController!: StrategyController;
+	private _completionRejections = 0;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -640,6 +641,7 @@ export class AgentSession {
 		};
 
 		this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
+			this._completionRejections = 0;
 			// 1. Update DecisionState with tool outcome
 			if (this._decisionState) {
 				const argsSummary = typeof args === "object" && args !== null ? JSON.stringify(args) : String(args);
@@ -850,7 +852,8 @@ export class AgentSession {
 
 						if (completionEval.isComplete && !isFailing) {
 							this._decisionState.execution.phase = "complete";
-						} else if (jevSettings.mode === "enforced") {
+						} else if (jevSettings.mode === "enforced" && this._completionRejections < 1) {
+							this._completionRejections++;
 							// In enforced mode, reject premature turn completion when verification fails
 							const directive = isFailing
 								? "Verification failed: Tests are currently failing. Please investigate and fix test failures before finishing."
@@ -1853,6 +1856,7 @@ export class AgentSession {
 			// Flush any pending bash and custom messages before the new prompt
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
+			this._completionRejections = 0;
 
 			// Initialize or update DecisionState
 			if (!this._decisionState) {

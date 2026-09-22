@@ -413,4 +413,58 @@ describe("Session Integration with Jev Decision Subsystem", () => {
 		expect(decisionState?.verification.testStatus).toBe("passing");
 		expect(decisionState?.execution.phase).toBe("verify");
 	});
+
+	it("completion gate rejects premature completion and injects steering when verification fails in enforced mode", async () => {
+		let bashCount = 0;
+		const testBashTool: AgentTool = {
+			name: "bash",
+			label: "Bash",
+			description: "Bash execution",
+			parameters: Type.Object({ command: Type.String() }),
+			execute: async () => {
+				bashCount++;
+				throw new Error("FAIL: 2 tests failed");
+			},
+		};
+
+		const mockEngine = new MockDecisionEngine();
+		mockEngine.nextAnswers = {
+			goalSatisfied: { type: "noul", noul: 0.2 },
+			verificationSufficient: { type: "noul", noul: 0.1 },
+			remainingBlockers: { type: "noul", noul: 0.9 },
+		};
+
+		harness = await createHarness({
+			responses: [
+				{
+					text: "Running tests...",
+					toolCalls: [{ name: "bash", args: { command: "npm test" } }],
+				},
+				// Assistant attempts to finish prematurely despite test failure
+				"I have finished the task successfully!",
+				// Assistant is steered back to address failing tests
+				"Fixing failing assertions now...",
+			],
+			baseToolsOverride: {
+				bash: testBashTool,
+			},
+			settings: {
+				jev: {
+					enabled: true,
+					mode: "enforced",
+				},
+			},
+			decisionEngine: mockEngine,
+		});
+
+		await harness.session.prompt("Implement feature and make sure tests pass");
+
+		// Verify state recorded failing tests
+		expect(bashCount).toBe(1);
+		const decisionState = harness.session.decisionState;
+		expect(decisionState?.verification.testStatus).toBe("failing");
+
+		// Verify the session made an additional turn due to finishTurn rejecting premature completion
+		expect(harness.faux.callCount).toBe(3);
+	});
 });
