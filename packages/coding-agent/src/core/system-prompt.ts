@@ -4,6 +4,7 @@
 
 import { getSystemMessageText } from "@earendil-works/pi-ai";
 import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
+import type { DecisionState } from "./decision/decision-types.ts";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 
 export interface BuildSystemPromptOptions {
@@ -29,6 +30,10 @@ export interface BuildSystemPromptOptions {
 	contextFiles?: Array<{ path: string; content: string }>;
 	/** Pre-loaded skills. */
 	skills?: Skill[];
+	/** Active DecisionState for System-1 decision layer injection. */
+	decisionState?: DecisionState;
+	/** Jev operating mode ('off' | 'shadow' | 'advisory' | 'enforced'). */
+	jevMode?: "off" | "shadow" | "advisory" | "enforced";
 }
 
 export type NormalizedBuildSystemPromptOptions = BuildSystemPromptOptions & {
@@ -40,6 +45,8 @@ export type NormalizedBuildSystemPromptOptions = BuildSystemPromptOptions & {
 	sections: Record<string, string>;
 	contextFiles: Array<{ path: string; content: string }>;
 	skills: Skill[];
+	decisionState?: DecisionState;
+	jevMode?: "off" | "shadow" | "advisory" | "enforced";
 };
 
 /**
@@ -66,7 +73,29 @@ export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptOption
 		cwd: input.cwd,
 		contextFiles: (input.contextFiles ?? []).map((file) => ({ ...file })),
 		skills: (input.skills ?? []).map((skill) => ({ ...skill })),
+		decisionState: input.decisionState,
+		jevMode: input.jevMode,
 	};
+}
+
+function renderDecisionLayer(jevMode?: string, selectedTools: string[] = []): string {
+	const parts: string[] = [
+		`TypeSafe Jev System-1 Decision Layer is ACTIVE (mode: ${jevMode}).`,
+		"Architecture: You (the generative LLM) handle creative reasoning, code synthesis, and architectural decisions. System-1 micro-models handle bounded evaluations (task routing, tool risk preflight, strategy supervisor, completion verification) with sub-100ms latency.",
+	];
+
+	const hasJevTools = selectedTools.some((t) => t.startsWith("jev_"));
+	if (hasJevTools) {
+		parts.push(
+			"\nNative Decision Tools available:",
+			"- jev_diff_review: Run before claiming completion to detect scope drift, regressions, or missing test coverage.",
+			"- jev_strategy: Consult when stuck, facing repeated test failures, or deciding whether to rethink approach.",
+			"- jev_test_select: Identify and prioritize the minimal test files affected by modified code.",
+			"- jev_status: Inspect living decision state, execution phase, churn, and telemetry.",
+		);
+	}
+
+	return parts.join("\n");
 }
 
 function renderProjectContext(contextFiles: Array<{ path: string; content: string }>): string {
@@ -166,6 +195,9 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 	if (skillFileReadTool && skills.length > 0) {
 		const skillsPrompt = formatSkillsForPrompt(skills, skillFileReadTool).trim();
 		if (skillsPrompt) promptSections.skills = skillsPrompt;
+	}
+	if (options.jevMode && options.jevMode !== "off") {
+		promptSections.decision_layer = renderDecisionLayer(options.jevMode, selectedTools);
 	}
 	promptSections.cwd = cwd.replace(/\\/g, "/");
 	for (const [name, content] of Object.entries(customSections)) {

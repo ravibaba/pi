@@ -121,3 +121,43 @@ export const COMPACTION_ADVISOR_V1 = {
 		"Is the agent in the middle of a delicate active debugging sequence where compaction risks losing critical trace evidence?",
 	),
 } as const;
+
+/**
+ * Semantic Diff Review Bundle (v1):
+ * Assesses git diff quality, task alignment, scope drift, and test coverage risk.
+ */
+export const DIFF_REVIEW_V1 = {
+	scopeDrift: noul(
+		"Does this git diff modify files, functions, or configurations that are unrelated to the stated task objective?",
+	),
+	regressionRisk: score(
+		"Rate the risk that this diff unintentionally breaks existing contracts or introduces regressions:",
+		[
+			"Negligible (pure documentation or trivial comment)",
+			"Low (isolated bug fix with clean contracts)",
+			"Moderate (shared logic or modified interfaces)",
+			"High (wide architectural impact or critical path)",
+			"Critical (breaking protocol, auth, or schema change)",
+		],
+	),
+	missingTestRisk: noul(
+		"Does this diff introduce new logic, branches, or API behavior without corresponding test coverage?",
+	),
+	taskAlignment: noul("Does this diff faithfully and cleanly fulfill the user's intended goal?"),
+} as const;
+
+/**
+ * Intelligent Test Selection Bundle (v1):
+ * Evaluates changed files against test candidates to prioritize the minimal sufficient verification set.
+ */
+export const TEST_SELECTION_V1 = {
+	selectionPriority: choice("Which test category is most urgently impacted by this change?", {
+		unit: "Unit tests directly covering the modified files or functions",
+		integration: "Integration tests exercising interactions between modified modules",
+		full_suite: "Broad test suite required due to core API or shared dependency changes",
+		none: "No tests needed (documentation, comments, or mechanical formatting only)",
+	}),
+	riskOfUnrunFailures: noul(
+		"Is it likely that tests outside the immediate unit scope could fail due to these changes?",
+	),
+} as const;

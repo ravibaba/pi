@@ -146,6 +146,7 @@ import {
 } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
+import { createJevTools, JEV_TOOL_PROMPT_CONTRIBUTIONS } from "./tools/jev/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
@@ -491,6 +492,23 @@ export class AgentSession {
 			this.agent.state.model,
 		);
 		this._strategyController = new StrategyController();
+
+		if (jevSettings.enabled && jevSettings.mode !== "off") {
+			const jevTools = createJevTools(
+				this._cwd,
+				() => this._decisionState,
+				() => this._decisionEngine,
+			);
+			for (const tool of jevTools) {
+				const def = createToolDefinitionFromAgentTool(tool);
+				const contribution = JEV_TOOL_PROMPT_CONTRIBUTIONS[tool.name];
+				if (contribution) {
+					def.promptSnippet = contribution.snippet;
+					def.promptGuidelines = [...contribution.guidelines];
+				}
+				this._customTools.push(def);
+			}
+		}
 	}
 
 	get decisionEngine(): DecisionEngine {
@@ -885,11 +903,14 @@ export class AgentSession {
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.({ ...turn, context }, signal);
 			const nextContext = previousSnapshot?.context ?? context;
 			const runOptions = this._runSystemPromptOptions ?? this._baseSystemPromptOptions;
+			const jevSettings = this.settingsManager.getJevSettings();
 			const options = normalizeBuildSystemPromptOptions({
 				...runOptions,
 				selectedTools: this.getActiveToolNames(),
 				toolSnippets: { ...this._baseSystemPromptOptions.toolSnippets, ...runOptions.toolSnippets },
 				toolGuidelines: { ...this._baseSystemPromptOptions.toolGuidelines, ...runOptions.toolGuidelines },
+				decisionState: this._decisionState,
+				jevMode: jevSettings.enabled ? jevSettings.mode : undefined,
 			});
 			const updateMessage = this._preparePromptAndToolLoadout(options, nextContext.messages);
 			// Keep session.systemPrompt and ctx.getSystemPrompt() in step with what the provider sees.
@@ -1569,6 +1590,7 @@ export class AgentSession {
 		const loadedSkills = this._resourceLoader.getSkills().skills;
 		const loadedContextFiles = this._resourceLoader.getAgentsFiles().agentsFiles;
 
+		const jevSettings = this.settingsManager.getJevSettings();
 		this._baseSystemPromptOptions = normalizeBuildSystemPromptOptions({
 			cwd: this._cwd,
 			skills: loadedSkills,
@@ -1578,6 +1600,8 @@ export class AgentSession {
 			selectedTools: validToolNames,
 			toolSnippets,
 			toolGuidelines: Object.fromEntries(this._toolPromptGuidelines),
+			decisionState: this._decisionState,
+			jevMode: jevSettings.enabled ? jevSettings.mode : undefined,
 		});
 	}
 

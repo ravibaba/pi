@@ -467,4 +467,55 @@ describe("Session Integration with Jev Decision Subsystem", () => {
 		// Verify the session made an additional turn due to finishTurn rejecting premature completion
 		expect(harness.faux.callCount).toBe(3);
 	});
+
+	it("registers native Jev tools and injects decision_layer into system prompt when Jev is enabled", async () => {
+		const mockEngine = new MockDecisionEngine();
+		harness = await createHarness({
+			responses: ["Working on task..."],
+			settings: {
+				jev: {
+					enabled: true,
+					mode: "enforced",
+				},
+			},
+			decisionEngine: mockEngine,
+		});
+
+		await harness.session.prompt("Analyze repository structure");
+
+		const activeTools = harness.session.getActiveToolNames();
+		expect(activeTools).toContain("jev_diff_review");
+		expect(activeTools).toContain("jev_strategy");
+		expect(activeTools).toContain("jev_test_select");
+		expect(activeTools).toContain("jev_status");
+
+		const systemPrompt = harness.session.systemPrompt;
+		expect(systemPrompt).toContain("<decision_layer>");
+		expect(systemPrompt).toContain("TypeSafe Jev System-1 Decision Layer is ACTIVE (mode: enforced).");
+		expect(systemPrompt).toContain("Native Decision Tools available:");
+		expect(systemPrompt).toContain("jev_diff_review");
+	});
+
+	it("omits native Jev tools and decision_layer section when Jev mode is off", async () => {
+		harness = await createHarness({
+			responses: ["Direct execution"],
+			settings: {
+				jev: {
+					enabled: false,
+					mode: "off",
+				},
+			},
+		});
+
+		await harness.session.prompt("Quick question");
+
+		const activeTools = harness.session.getActiveToolNames();
+		expect(activeTools).not.toContain("jev_diff_review");
+		expect(activeTools).not.toContain("jev_strategy");
+		expect(activeTools).not.toContain("jev_test_select");
+		expect(activeTools).not.toContain("jev_status");
+
+		const systemPrompt = harness.session.systemPrompt;
+		expect(systemPrompt).not.toContain("<decision_layer>");
+	});
 });
