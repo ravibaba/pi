@@ -16,11 +16,24 @@ export class ModelRouter {
 	private readonly _configuredTiers: ModelTierConfig;
 	private readonly _availableModels: Model<Api>[];
 	private readonly _defaultModel?: Model<Api>;
+	private readonly _unresolvedTierReferences: string[];
 
 	constructor(configuredTiers: ModelTierConfig = {}, availableModels: Model<Api>[] = [], defaultModel?: Model<Api>) {
 		this._configuredTiers = configuredTiers;
 		this._availableModels = availableModels;
 		this._defaultModel = defaultModel;
+		this._unresolvedTierReferences = Object.entries(configuredTiers)
+			.filter(([, reference]) => reference !== undefined && !this._findModel(reference))
+			.map(([tier, reference]) => `${tier}="${reference}"`);
+	}
+
+	/**
+	 * Configured tier references that do not match any available model.
+	 * Resolving these tiers falls back to the default model, silently
+	 * disabling tier routing, so callers should surface this as a warning.
+	 */
+	get unresolvedTierReferences(): readonly string[] {
+		return this._unresolvedTierReferences;
 	}
 
 	/**

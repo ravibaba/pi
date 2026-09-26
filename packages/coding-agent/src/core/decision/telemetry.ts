@@ -26,6 +26,8 @@ export interface DecisionRecord {
 	readonly requestId?: string;
 	readonly fallback: boolean;
 	readonly fallbackReason?: string;
+	/** Per-answer confidence (choice/score) or certainty (noul) used by deterministic policies. */
+	readonly confidences?: Record<string, number>;
 	readonly prediction: Record<string, unknown>;
 	outcome?: DecisionOutcome;
 }
@@ -52,14 +54,18 @@ export class DecisionTelemetry {
 	record<Q extends Record<string, any>>(decisionType: string, result: DecisionResult<Q>): string {
 		const decisionId = randomUUID();
 		const simplifiedAnswers: Record<string, unknown> = {};
+		const confidences: Record<string, number> = {};
 
 		for (const [k, v] of Object.entries(result.answers)) {
 			if (v.type === "choice") {
 				simplifiedAnswers[k] = v.choice;
+				confidences[k] = v.confidence;
 			} else if (v.type === "noul") {
 				simplifiedAnswers[k] = v.noul;
+				confidences[k] = Math.abs(v.noul - 0.5) * 2;
 			} else if (v.type === "score") {
 				simplifiedAnswers[k] = v.score;
+				confidences[k] = v.confidence;
 			}
 		}
 
@@ -76,6 +82,7 @@ export class DecisionTelemetry {
 			requestId: result.requestId,
 			fallback: result.fallback,
 			fallbackReason: result.fallbackReason,
+			confidences,
 			prediction: simplifiedAnswers,
 		};
 

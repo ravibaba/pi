@@ -1,8 +1,13 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { collectSettingsDiagnostics, deduplicateDiagnostics } from "../src/core/settings-diagnostics.ts";
+import {
+	collectJevDiagnostics,
+	collectSettingsDiagnostics,
+	deduplicateDiagnostics,
+} from "../src/core/settings-diagnostics.ts";
 import { SettingsManager, type SettingsStorage } from "../src/core/settings-manager.ts";
 
 describe("settings diagnostics", () => {
@@ -43,5 +48,64 @@ describe("settings diagnostics", () => {
 			warning,
 			{ ...warning, type: "error" },
 		]);
+	});
+
+	it("warns about unknown jev.thresholds keys and unmatched modelTiers references", () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "pi-jev-diagnostics-"));
+		const agentDir = join(tempDir, "agent");
+		mkdirSync(agentDir);
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({
+				jev: {
+					enabled: true,
+					thresholds: {
+						routing: { confidenceCutoff: 0.85 },
+						routingConfidence: 0.8,
+					},
+					modelTiers: { fast: "nonexistent/fast-model" },
+				},
+			}),
+		);
+
+		const mockModels = [
+			{ id: "glm-5.3-flash", name: "GLM", provider: "z-ai", api: "openai-completions" } as unknown as Model<Api>,
+		];
+
+		try {
+			const diagnostics = collectJevDiagnostics(SettingsManager.create(tempDir, agentDir), mockModels);
+
+			expect(diagnostics).toHaveLength(2);
+			expect(diagnostics.some((d) => d.message.includes('Unknown jev.thresholds key "routing"'))).toBe(true);
+			expect(diagnostics.some((d) => d.message.includes('jev.modelTiers.fast="nonexistent/fast-model"'))).toBe(true);
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("produces no jev diagnostics for a valid flat configuration", () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "pi-jev-diagnostics-"));
+		const agentDir = join(tempDir, "agent");
+		mkdirSync(agentDir);
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({
+				jev: {
+					enabled: true,
+					thresholds: { routingConfidence: 0.8 },
+					modelTiers: { fast: "z-ai/glm-5.3-flash" },
+				},
+			}),
+		);
+
+		const mockModels = [
+			{ id: "glm-5.3-flash", name: "GLM", provider: "z-ai", api: "openai-completions" } as unknown as Model<Api>,
+		];
+
+		try {
+			expect(collectJevDiagnostics(SettingsManager.create(tempDir, agentDir), mockModels)).toEqual([]);
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
 	});
 });

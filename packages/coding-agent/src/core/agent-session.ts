@@ -496,9 +496,12 @@ export class AgentSession {
 				cacheTtlMs: jevSettings.cacheTtlMs,
 			});
 		this._decisionPolicy = new DecisionPolicy(jevSettings.thresholds);
+		// Resolve tier references against the full model catalog, not just the scoped
+		// models: scoped models only exist when --models or enabledModels is set, and
+		// with an empty scope every tier would silently resolve to the current model.
 		this._modelRouter = new ModelRouter(
 			jevSettings.modelTiers,
-			this._scopedModels.map((sm) => sm.model),
+			[...this._modelRuntime.getModels()],
 			this.agent.state.model,
 		);
 		this._strategyController = new StrategyController();
@@ -1913,6 +1916,16 @@ export class AgentSession {
 					);
 					this._decisionState.model.currentTier = policyRoute.tier;
 					this._decisionState.model.confidence = policyRoute.confidence;
+
+					// Feed the routing answers back into persistent state so subsequent
+					// decisions and re-routings see the classified task, not stale defaults.
+					const complexityScore = Number(routeResult.answers.complexity?.score ?? 1);
+					if (Number.isFinite(complexityScore)) {
+						this._decisionState.task.complexity = Math.min(Math.max(Math.round(complexityScore) + 1, 1), 5);
+					}
+					if (Number(routeResult.answers.needsRepoSearch?.noul ?? 0) >= 0.5) {
+						this._decisionState.task.scope = "repo";
+					}
 
 					if (jevSettings.mode === "enforced" && this.model) {
 						const targetModel = this._modelRouter.resolveModelForTier(policyRoute.tier);

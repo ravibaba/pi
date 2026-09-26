@@ -47,6 +47,7 @@ describe("telemetry", () => {
 		expect(record1?.decisionType).toBe("task_routing");
 		expect(record1?.model).toBe("jev-latest");
 		expect(record1?.prediction.modelTier).toBe("standard");
+		expect(record1?.confidences?.modelTier).toBe(0.95);
 
 		// Record downstream outcome
 		telemetry.recordOutcome(id1, {
@@ -66,6 +67,25 @@ describe("telemetry", () => {
 		expect(metrics.averageLatencyMs).toBe(100);
 		expect(metrics.totalInputTokens).toBe(250);
 		expect(metrics.estimatedTokensSaved).toBe(1500);
+	});
+
+	it("maps noul certainty to distance from 0.5 in confidences", () => {
+		const telemetry = new DecisionTelemetry(10);
+
+		const id = telemetry.record("tool_risk", {
+			answers: {
+				destructive: { type: "noul", noul: 0.75 },
+			},
+			confidence: 0.5,
+			latencyMs: 10,
+			inputTokens: 50,
+			costUsd: 0.00005,
+			model: "jev-latest",
+			fallback: false,
+			stateHash: "hash-noul",
+		});
+
+		expect(telemetry.getRecord(id)?.confidences?.destructive).toBeCloseTo(0.5);
 	});
 
 	it("respects maxRecords capacity and rotates old entries", () => {

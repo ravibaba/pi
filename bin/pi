@@ -13,7 +13,7 @@ REPO_DIR="$(cd -P "$BIN_DIR/.." >/dev/null 2>&1 && pwd)"
 
 # Default session environment for provider and model if not already set
 export PI_PROVIDER="${PI_PROVIDER:-openrouter}"
-export PI_MODEL="${PI_MODEL:-nvidia/nemotron-3-ultra-550b-a55b:free}"
+export PI_MODEL="${PI_MODEL:-z-ai/glm-5.3-flash}"
 
 # Check if model or provider was explicitly passed in arguments
 has_model=false

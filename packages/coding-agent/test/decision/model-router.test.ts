@@ -94,4 +94,40 @@ describe("model-router", () => {
 		expect(ModelRouter.getEscalatedTier("reasoning")).toBe("deep");
 		expect(ModelRouter.getEscalatedTier("deep")).toBe("deep");
 	});
+
+	it("should resolve configured tiers by bare model id containing a slash", () => {
+		const openRouterModel = {
+			id: "nvidia/nemotron-3-ultra-550b-a55b:free",
+			name: "NVIDIA Nemotron Ultra",
+			provider: "openrouter",
+			api: "openai-completions",
+		} as unknown as Model<Api>;
+		const router = new ModelRouter(
+			{ fast: "nvidia/nemotron-3-ultra-550b-a55b:free" },
+			[...mockModels, openRouterModel],
+			defaultModel,
+		);
+		expect(router.resolveModelForTier("fast")?.id).toBe("nvidia/nemotron-3-ultra-550b-a55b:free");
+		expect(router.unresolvedTierReferences).toHaveLength(0);
+	});
+
+	it("should report configured tier references that match no available model", () => {
+		const router = new ModelRouter(
+			{
+				fast: "nonexistent/fast-model",
+				standard: "nonexistent:standard-model",
+				reasoning: undefined,
+			},
+			mockModels,
+			defaultModel,
+		);
+		expect(router.unresolvedTierReferences).toEqual([
+			'fast="nonexistent/fast-model"',
+			'standard="nonexistent:standard-model"',
+		]);
+	});
+
+	it("should not report unresolved references when the catalog is empty and no tiers are configured", () => {
+		expect(new ModelRouter({}, [], defaultModel).unresolvedTierReferences).toHaveLength(0);
+	});
 });

@@ -57,7 +57,11 @@ import {
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
-import { collectSettingsDiagnostics, deduplicateDiagnostics } from "./core/settings-diagnostics.ts";
+import {
+	collectJevDiagnostics,
+	collectSettingsDiagnostics,
+	deduplicateDiagnostics,
+} from "./core/settings-diagnostics.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
@@ -783,6 +787,7 @@ export async function main(args: string[], options?: MainOptions) {
 			...projectTrustDiagnostics,
 			...services.diagnostics,
 			...collectSettingsDiagnostics(settingsManager),
+			...collectJevDiagnostics(settingsManager, modelRuntime.getModels()),
 			...resourceLoader.getExtensions().errors.map(({ path, error }) => ({
 				type: "error" as const,
 				message: `Failed to load extension "${path}": ${error}`,

@@ -106,6 +106,42 @@ describe("Session Integration with Jev Decision Subsystem", () => {
 		// In shadow mode, tier was updated on state but active model did not change
 		expect(decisionState?.model.currentTier).toBe("reasoning");
 		expect(harness.session.model?.id).toBe(fauxModel.id);
+
+		// Routing answers are fed back into persistent decision state
+		expect(decisionState?.task.complexity).toBeGreaterThan(1);
+	});
+
+	it("writes task routing complexity and repo scope into decision state", async () => {
+		const mockEngine = new MockDecisionEngine();
+		mockEngine.nextAnswers = {
+			modelTier: {
+				type: "choice",
+				choice: "deep",
+				confidence: 0.95,
+				probabilities: { fast: 0.0, standard: 0.0, reasoning: 0.05, deep: 0.95 },
+			},
+			complexity: { type: "score", score: 3 },
+			needsRepoSearch: { type: "noul", noul: 0.9 },
+		};
+
+		harness = await createHarness({
+			responses: ["Task completed successfully."],
+			settings: {
+				jev: {
+					enabled: true,
+					mode: "shadow",
+				},
+			},
+			decisionEngine: mockEngine,
+		});
+
+		const decisionState = harness.session.decisionState;
+		expect(decisionState?.task.complexity ?? 1).toBe(1);
+
+		await harness.session.prompt("Migrate the whole subsystem");
+
+		expect(harness.session.decisionState?.task.complexity).toBe(4);
+		expect(harness.session.decisionState?.task.scope).toBe("repo");
 	});
 
 	it("blocks destructive tool call when in enforced mode", async () => {
